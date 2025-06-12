@@ -1,0 +1,326 @@
+{% extends "components/base.html" %}
+{% block main %}
+<nav class="navbar navbar-expand-lg bg-dark border-bottom border-body" data-bs-theme="dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="{% url 'home' %}">Website Scraper Dashboard</a>
+      <div class="collapse navbar-collapse">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item">
+            <span class="navbar-text">Session Details - {{ session.website.name|title }}</span>
+          </li>
+        </ul>
+        <a href="{% url 'logout' %}" class="btn btn-danger">Logout</a>
+      </div>
+    </div>
+</nav>
+
+<div class="container-fluid mt-4">
+    <!-- Back Button -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <a href="{% url 'home' %}" class="btn btn-secondary">&larr; Back to Dashboard</a>
+        </div>
+    </div>
+
+    <!-- Session Overview -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h4>Session Overview</h4>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Basic Information</h6>
+                            <table class="table table-sm">
+                                <tr><td><strong>Website:</strong></td><td>{{ session.website.name|title }}</td></tr>
+                                <tr><td><strong>Status:</strong></td><td>
+                                    <span class="badge 
+                                        {% if session.status == 'completed' %}bg-success
+                                        {% elif session.status == 'running' %}bg-primary
+                                        {% elif session.status == 'failed' %}bg-danger
+                                        {% elif session.status == 'paused' %}bg-warning
+                                        {% elif session.status == 'stopped' %}bg-secondary
+                                        {% else %}bg-info{% endif %}">
+                                        {{ session.status|title }}
+                                    </span>
+                                </td></tr>
+                                <tr><td><strong>Started By:</strong></td><td>{{ session.started_by.username|default:"System" }}</td></tr>
+                                <tr><td><strong>Started At:</strong></td><td>{{ session.started_at|date:"M d, Y H:i:s" }}</td></tr>
+                                <tr><td><strong>Completed At:</strong></td><td>
+                                    {% if session.completed_at %}
+                                        {{ session.completed_at|date:"M d, Y H:i:s" }}
+                                    {% else %}
+                                        <em>Still running</em>
+                                    {% endif %}
+                                </td></tr>
+                                {% if session.duration %}
+                                    <tr><td><strong>Duration:</strong></td><td>{{ session.duration }}</td></tr>
+                                {% endif %}
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Statistics</h6>
+                            <table class="table table-sm">
+                                <tr><td><strong>Total Products Found:</strong></td><td id="session-total-found">{{ session.total_products_found }}</td></tr>
+                                <tr><td><strong>Products Scraped:</strong></td><td id="session-products-scraped">{{ session.products_scraped }}</td></tr>
+                                <tr><td><strong>Products Created:</strong></td><td class="text-success" id="session-products-created">{{ session.products_created }}</td></tr>
+                                <tr><td><strong>Products Updated:</strong></td><td class="text-info" id="session-products-updated">{{ session.products_updated }}</td></tr>
+                                <tr><td><strong>Products Failed:</strong></td><td class="text-danger" id="session-products-failed">{{ session.products_failed }}</td></tr>
+                                <tr id="last-processed-row" {% if not session.last_processed_index %}style="display:none;"{% endif %}>
+                                    <td><strong>Last Processed Index:</strong></td><td id="session-last-processed">{{ session.last_processed_index|default:0 }}</td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Progress Bar -->
+                            <div class="mt-3" id="progress-section" {% if not session.total_products_found %}style="display:none;"{% endif %}>
+                                <h6>Progress</h6>
+                                <div class="progress">
+                                    <div class="progress-bar" role="progressbar" id="session-progress-bar"
+                                         style="width: {% if session.total_products_found > 0 %}{% widthratio session.products_scraped session.total_products_found 100 %}{% else %}0{% endif %}%">
+                                         {% if session.total_products_found > 0 %}{% widthratio session.products_scraped session.total_products_found 100 %}%{% endif %}
+                                    </div>
+                                </div>
+                                <small class="text-muted" id="session-progress-text">{{ session.products_scraped }} of {{ session.total_products_found }} processed</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    {% if session.status in 'paused,failed,stopped' %}
+                        <form method="post" action="{% url 'resume_scraping' session.id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success">Resume Session</button>
+                        </form>
+                    {% endif %}
+                    
+                    {% if website_status.is_running and website_status.current_session.id == session.id %}
+                        <form method="post" action="{% url 'stop_scraping' session.website.id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger">Stop Session</button>
+                        </form>
+                    {% endif %}
+                    
+                    <button class="btn btn-secondary" onclick="refreshAll()">Refresh All</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Logs -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5>Session Logs</h5>
+                    <div>
+                        <select id="logLevelFilter" class="form-select form-select-sm" style="width: auto; display: inline-block;">
+                            <option value="">All Levels</option>
+                            <option value="info">Info</option>
+                            <option value="success">Success</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                    <div id="logs-container">
+                        {% if logs %}
+                            <div class="table-responsive">
+                                <table class="table table-sm table-striped">
+                                    <thead class="sticky-top bg-light">
+                                        <tr>
+                                            <th width="130">Timestamp</th>
+                                            <th width="80">Level</th>
+                                            <th>Message</th>
+                                            <th width="100">SKU</th>
+                                            <th width="100">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="logs-tbody">
+                                        {% for log in logs %}
+                                        <tr class="log-row" data-level="{{ log.level }}">
+                                            <td class="small text-muted">{{ log.timestamp|date:"M d H:i:s" }}</td>
+                                            <td>
+                                                <span class="badge 
+                                                    {% if log.level == 'success' %}bg-success
+                                                    {% elif log.level == 'info' %}bg-info
+                                                    {% elif log.level == 'warning' %}bg-warning
+                                                    {% elif log.level == 'error' %}bg-danger
+                                                    {% else %}bg-secondary{% endif %}">
+                                                    {{ log.level|title }}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                {{ log.message }}
+                                                {% if log.exception_details %}
+                                                    <button class="btn btn-sm btn-outline-secondary ms-2" type="button" 
+                                                            data-bs-toggle="collapse" data-bs-target="#exception-{{ forloop.counter }}">
+                                                        Show Details
+                                                    </button>
+                                                    <div class="collapse mt-2" id="exception-{{ forloop.counter }}">
+                                                        <div class="card card-body bg-light">
+                                                            <pre class="small mb-0">{{ log.exception_details }}</pre>
+                                                        </div>
+                                                    </div>
+                                                {% endif %}
+                                            </td>
+                                            <td class="small">{{ log.product_sku|default:"-" }}</td>
+                                            <td>
+                                                {% if log.product_url %}
+                                                    <a href="{{ log.product_url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                                        View URL
+                                                    </a>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <p class="text-muted">No logs available for this session.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Log level filtering
+document.getElementById('logLevelFilter').addEventListener('change', function() {
+    const selectedLevel = this.value;
+    const rows = document.querySelectorAll('.log-row');
+    
+    rows.forEach(row => {
+        if (selectedLevel === '' || row.getAttribute('data-level') === selectedLevel) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+});
+
+// Refresh session statistics
+function refreshSessionData() {
+    fetch(`/session-data/{{ session.id }}/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.id) {
+                // Update statistics
+                document.getElementById('session-total-found').textContent = data.total_products_found || 0;
+                document.getElementById('session-products-scraped').textContent = data.products_scraped || 0;
+                document.getElementById('session-products-created').textContent = data.products_created || 0;
+                document.getElementById('session-products-updated').textContent = data.products_updated || 0;
+                document.getElementById('session-products-failed').textContent = data.products_failed || 0;
+                
+                // Update last processed index
+                const lastProcessedElement = document.getElementById('session-last-processed');
+                const lastProcessedRow = document.getElementById('last-processed-row');
+                if (data.last_processed_index > 0) {
+                    lastProcessedElement.textContent = data.last_processed_index;
+                    lastProcessedRow.style.display = '';
+                } else {
+                    lastProcessedRow.style.display = 'none';
+                }
+                
+                // Update progress bar
+                const progressSection = document.getElementById('progress-section');
+                const progressBar = document.getElementById('session-progress-bar');
+                const progressText = document.getElementById('session-progress-text');
+                
+                if (data.total_products_found > 0) {
+                    progressSection.style.display = '';
+                    const percentage = (data.products_scraped / data.total_products_found) * 100;
+                    progressBar.style.width = percentage + '%';
+                    progressBar.textContent = Math.round(percentage) + '%';
+                    progressText.textContent = `${data.products_scraped} of ${data.total_products_found} processed`;
+                } else {
+                    progressSection.style.display = 'none';
+                }
+            }
+        })
+        .catch(error => console.error('Error refreshing session data:', error));
+}
+
+// Refresh logs function
+function refreshLogs() {
+    fetch(`/session-logs/{{ session.id }}/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.logs) {
+                // Update logs table
+                const tbody = document.getElementById('logs-tbody');
+                tbody.innerHTML = '';
+                
+                data.logs.forEach((log, index) => {
+                    const row = document.createElement('tr');
+                    row.className = 'log-row';
+                    row.setAttribute('data-level', log.level);
+                    
+                    let badgeClass = 'bg-secondary';
+                    if (log.level === 'success') badgeClass = 'bg-success';
+                    else if (log.level === 'info') badgeClass = 'bg-info';
+                    else if (log.level === 'warning') badgeClass = 'bg-warning';
+                    else if (log.level === 'error') badgeClass = 'bg-danger';
+                    
+                    row.innerHTML = `
+                        <td class="small text-muted">${new Date(log.timestamp).toLocaleString()}</td>
+                        <td><span class="badge ${badgeClass}">${log.level.charAt(0).toUpperCase() + log.level.slice(1)}</span></td>
+                        <td>
+                            ${log.message}
+                            ${log.exception_details ? `
+                                <button class="btn btn-sm btn-outline-secondary ms-2" type="button" 
+                                        data-bs-toggle="collapse" data-bs-target="#exception-${index}">
+                                    Show Details
+                                </button>
+                                <div class="collapse mt-2" id="exception-${index}">
+                                    <div class="card card-body bg-light">
+                                        <pre class="small mb-0">${log.exception_details}</pre>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </td>
+                        <td class="small">${log.product_sku || '-'}</td>
+                        <td>
+                            ${log.product_url ? `<a href="${log.product_url}" target="_blank" class="btn btn-sm btn-outline-primary">View URL</a>` : ''}
+                        </td>
+                    `;
+                    
+                    tbody.appendChild(row);
+                });
+                
+                // Reapply filter
+                document.getElementById('logLevelFilter').dispatchEvent(new Event('change'));
+            }
+        })
+        .catch(error => console.error('Error refreshing logs:', error));
+}
+
+// Combined refresh function
+function refreshAll() {
+    refreshSessionData();
+    refreshLogs();
+}
+
+// Update button to refresh both
+function refreshLogsButton() {
+    refreshAll();
+}
+
+// Replace the existing refresh function call
+const refreshButton = document.querySelector('button[onclick="refreshLogs()"]');
+if (refreshButton) {
+    refreshButton.setAttribute('onclick', 'refreshAll()');
+}
+
+// Auto-refresh both statistics and logs every 10 seconds if session is running
+{% if session.status == 'running' %}
+setInterval(refreshAll, 10000);
+{% endif %}
+</script>
+
+{% endblock main %}

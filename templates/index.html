@@ -1,0 +1,315 @@
+{% extends "components/base.html" %}
+{% block main %}
+<nav class="navbar navbar-expand-lg bg-dark border-bottom border-body" data-bs-theme="dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#">Website Scraper Dashboard</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item">
+            <span class="navbar-text">Welcome, {{ user.username }}</span>
+          </li>
+        </ul>
+        <a href="{% url 'logout' %}" class="btn btn-danger">Logout</a>
+      </div>
+    </div>
+</nav>
+
+<div class="container-fluid mt-4">
+    <!-- Messages -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Bulk Operations and Export -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Bulk Operations & Export</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Bulk Scraping Operations</h6>
+                            <form method="post" action="{% url 'start_all_scraping' %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success me-2">Start All Websites</button>
+                            </form>
+                            <form method="post" action="{% url 'stop_all_scraping' %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger">Stop All Websites</button>
+                            </form>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Export Products</h6>
+                            <div class="dropdown">
+                                <button class="btn btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                    Export Products
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li><h6 class="dropdown-header">All Websites</h6></li>
+                                    <li><a class="dropdown-item" href="{% url 'export_products' %}?format=csv&website_id=all">Download CSV</a></li>
+                                    <li><a class="dropdown-item" href="{% url 'export_products' %}?format=excel&website_id=all">Download Excel</a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    {% for website in websites %}
+                                    <li><h6 class="dropdown-header">{{ website.name|title }}</h6></li>
+                                    <li><a class="dropdown-item" href="{% url 'export_products' %}?format=csv&website_id={{ website.id }}">{{ website.name|title }} CSV</a></li>
+                                    <li><a class="dropdown-item" href="{% url 'export_products' %}?format=excel&website_id={{ website.id }}">{{ website.name|title }} Excel</a></li>
+                                    {% if not forloop.last %}<li><hr class="dropdown-divider"></li>{% endif %}
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Website Status Cards -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2>Website Scraping Status</h2>
+        </div>
+        {% for status in website_statuses %}
+        <div class="col-md-6 col-lg-4 mb-3">
+            <div class="card h-100" id="website-card-{{ status.website_id }}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">{{ status.website_name|title }}</h5>
+                    <span class="badge {% if status.is_running %}bg-success{% else %}bg-secondary{% endif %}" id="status-badge-{{ status.website_id }}">
+                        {% if status.is_running %}Running{% else %}Idle{% endif %}
+                    </span>
+                </div>
+                <div class="card-body">
+                    {% if status.current_session %}
+                        <div class="mb-3">
+                            <h6>Current Session</h6>
+                            <p class="mb-1">Status: <span class="badge bg-info">{{ status.current_session.status|title }}</span></p>
+                            <p class="mb-1">Products Found: <span id="total-found-{{ status.website_id }}">{{ status.current_session.total_products_found }}</span></p>
+                            <p class="mb-1">Scraped: <span id="scraped-{{ status.website_id }}">{{ status.current_session.products_scraped }}</span></p>
+                            <p class="mb-1">Created: <span id="created-{{ status.website_id }}">{{ status.current_session.products_created }}</span></p>
+                            <p class="mb-1">Updated: <span id="updated-{{ status.website_id }}">{{ status.current_session.products_updated }}</span></p>
+                            <p class="mb-1">Failed: <span id="failed-{{ status.website_id }}">{{ status.current_session.products_failed }}</span></p>
+                            {% if status.current_session.total_products_found > 0 %}
+                                <p class="mb-1">Progress: <span id="progress-text-{{ status.website_id }}">{{ status.current_session.products_scraped }}/{{ status.current_session.total_products_found }}</span></p>
+                                <div class="progress mb-2">
+                                    <div class="progress-bar" role="progressbar" 
+                                         style="width: {% if status.current_session.total_products_found > 0 %}{% widthratio status.current_session.products_scraped status.current_session.total_products_found 100 %}{% else %}0{% endif %}%"
+                                         id="progress-bar-{{ status.website_id }}">
+                                         {% if status.current_session.total_products_found > 0 %}{% widthratio status.current_session.products_scraped status.current_session.total_products_found 100 %}%{% endif %}
+                                    </div>
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted">No active session</p>
+                        {% if status.last_run %}
+                            <p class="small">Last run: {{ status.last_run|date:"M d, Y H:i" }}</p>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                <div class="card-footer">
+                    {% if status.is_running %}
+                        <form method="post" action="{% url 'stop_scraping' status.website_id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger btn-sm">Stop Scraping</button>
+                        </form>
+                        {% if status.current_session %}
+                            <a href="{% url 'session_details' status.current_session.id %}" class="btn btn-info btn-sm">View Details</a>
+                        {% endif %}
+                    {% else %}
+                        <form method="post" action="{% url 'start_scraping' status.website_id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success btn-sm">Start Scraping</button>
+                        </form>
+                    {% endif %}
+                    <button class="btn btn-secondary btn-sm" onclick="refreshWebsiteStatus({{ status.website_id }})">Refresh</button>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12">
+            <div class="alert alert-info">No websites configured for scraping.</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Recent Session Groups -->
+    <div class="row">
+        <div class="col-12">
+            <h3>Recent Scraping Sessions</h3>
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Website</th>
+                            <th>Status</th>
+                            <th>Started By</th>
+                            <th>Started At</th>
+                            <th>Last Activity</th>
+                            <th>Resumes</th>
+                            <th>Products</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in session_groups %}
+                        <tr>
+                            <td>{{ group.original.website.name|title }}</td>
+                            <td>
+                                <span class="badge 
+                                    {% if group.latest_status == 'completed' %}bg-success
+                                    {% elif group.latest_status == 'running' %}bg-primary
+                                    {% elif group.latest_status == 'failed' %}bg-danger
+                                    {% elif group.latest_status == 'paused' %}bg-warning
+                                    {% elif group.latest_status == 'stopped' %}bg-secondary
+                                    {% else %}bg-info{% endif %}">
+                                    {{ group.latest_status|title }}
+                                </span>
+                                {% if group.is_active %}
+                                    <span class="badge bg-warning ms-1">Active</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ group.original.started_by.username|default:"System" }}</td>
+                            <td>{{ group.original.started_at|date:"M d, Y H:i" }}</td>
+                            <td>
+                                {% if group.latest_session.completed_at %}
+                                    {{ group.latest_session.completed_at|date:"M d, Y H:i" }}
+                                {% elif group.latest_session.started_at != group.original.started_at %}
+                                    {{ group.latest_session.started_at|date:"M d, Y H:i" }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if group.resumes %}
+                                    <span class="badge bg-info">{{ group.resumes|length }} resume{{ group.resumes|length|pluralize }}</span>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <small>
+                                    Scraped: {{ group.total_scraped }}<br>
+                                    Created: {{ group.total_created }}<br>
+                                    Updated: {{ group.total_updated }}<br>
+                                    Failed: {{ group.total_failed }}
+                                </small>
+                            </td>
+                            <td>
+                                <a href="{% url 'session_details' group.latest_session.id %}" class="btn btn-sm btn-outline-info">Details</a>
+                                {% if group.latest_status in 'paused,failed,stopped' %}
+                                    <form method="post" action="{% url 'resume_scraping' group.latest_session.id %}" style="display: inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-success">Resume</button>
+                                    </form>
+                                {% endif %}
+                                {% if group.resumes %}
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#resumes-{{ group.original.id }}">
+                                        Show Resumes
+                                    </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% if group.resumes %}
+                        <tr class="collapse" id="resumes-{{ group.original.id }}">
+                            <td colspan="8">
+                                <div class="card card-body bg-light">
+                                    <h6>Resume History:</h6>
+                                    <div class="row">
+                                        {% for resume in group.resumes %}
+                                        <div class="col-md-6 mb-2">
+                                            <div class="card card-sm">
+                                                <div class="card-body p-2">
+                                                    <small>
+                                                        <strong>Resume {{ forloop.counter }}:</strong><br>
+                                                        Started: {{ resume.started_at|date:"M d, Y H:i" }}<br>
+                                                        Status: <span class="badge bg-secondary">{{ resume.status|title }}</span><br>
+                                                        Products: {{ resume.products_scraped }}
+                                                        <a href="{% url 'session_details' resume.id %}" class="btn btn-xs btn-outline-info">View</a>
+                                                    </small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted">No scraping sessions found.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-refresh functionality
+function refreshWebsiteStatus(websiteId) {
+    fetch(`/website-status/${websiteId}/`)
+        .then(response => response.json())
+        .then(data => {
+            // Update status badge
+            const statusBadge = document.getElementById(`status-badge-${websiteId}`);
+            if (data.is_running) {
+                statusBadge.textContent = 'Running';
+                statusBadge.className = 'badge bg-success';
+            } else {
+                statusBadge.textContent = 'Idle';
+                statusBadge.className = 'badge bg-secondary';
+            }
+            
+            // Update session data if available
+            if (data.current_session) {
+                const session = data.current_session;
+                
+                // Update counters
+                document.getElementById(`total-found-${websiteId}`).textContent = session.total_products_found || 0;
+                document.getElementById(`scraped-${websiteId}`).textContent = session.products_scraped || 0;
+                document.getElementById(`created-${websiteId}`).textContent = session.products_created || 0;
+                document.getElementById(`updated-${websiteId}`).textContent = session.products_updated || 0;
+                document.getElementById(`failed-${websiteId}`).textContent = session.products_failed || 0;
+                
+                // Update progress bar if it exists
+                const progressBar = document.getElementById(`progress-bar-${websiteId}`);
+                if (progressBar && session.total_products_found > 0) {
+                    const percentage = (session.products_scraped / session.total_products_found) * 100;
+                    progressBar.style.width = percentage + '%';
+                    progressBar.textContent = Math.round(percentage) + '%';
+                }
+                
+                // Update progress text
+                const progressText = document.getElementById(`progress-text-${websiteId}`);
+                if (progressText && session.total_products_found > 0) {
+                    progressText.textContent = `${session.products_scraped}/${session.total_products_found}`;
+                }
+            }
+        })
+        .catch(error => console.error('Error refreshing status:', error));
+}
+
+// Auto-refresh every 30 seconds for running websites
+setInterval(() => {
+    {% for status in website_statuses %}
+        {% if status.is_running %}
+            refreshWebsiteStatus({{ status.website_id }});
+        {% endif %}
+    {% endfor %}
+}, 30000);
+</script>
+
+{% endblock main %}

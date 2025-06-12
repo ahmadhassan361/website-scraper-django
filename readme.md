@@ -190,6 +190,7 @@ python manage.py test
 Enable detailed logging:
 ```bash
 celery -A core worker --loglevel=debug
+celery -A core worker --concurrency=8 --loglevel=info
 ```
 
 ## 📝 API Endpoints

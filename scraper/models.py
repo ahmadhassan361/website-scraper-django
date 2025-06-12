@@ -23,6 +23,7 @@ class Product(models.Model):
     category = models.CharField(max_length=50, null=True, blank=True)   # category
     description = models.TextField(null=True, blank=True)               # Description
     link = models.TextField(null=True, blank=True)                      #link
+    image_link = models.TextField(null=True, blank=True)                #image_link
     created_at = models.DateTimeField(auto_now_add=True)                # created_at
     updated_at = models.DateTimeField(auto_now=True)                    # updated_at
     

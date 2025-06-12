@@ -90,15 +90,25 @@
                 </div>
                 <div class="card-body">
                     {% if status.current_session %}
-                        <div class="mb-3">
+                        <div class="mb-3 ">
                             <h6>Current Session</h6>
-                            <p class="mb-1">Status: <span class="badge bg-info">{{ status.current_session.status|title }}</span></p>
-                            <p class="mb-1">Products Found: <span id="total-found-{{ status.website_id }}">{{ status.current_session.total_products_found }}</span></p>
-                            <p class="mb-1">Scraped: <span id="scraped-{{ status.website_id }}">{{ status.current_session.products_scraped }}</span></p>
-                            <p class="mb-1">Created: <span id="created-{{ status.website_id }}">{{ status.current_session.products_created }}</span></p>
-                            <p class="mb-1">Updated: <span id="updated-{{ status.website_id }}">{{ status.current_session.products_updated }}</span></p>
-                            <p class="mb-1">Failed: <span id="failed-{{ status.website_id }}">{{ status.current_session.products_failed }}</span></p>
+                            <hr>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="w-50">
+                                    <p class="mb-1">Status: <span class="badge bg-info">{{ status.current_session.status|title }}</span></p>
+                                    <p class="mb-1">Products Found: <span id="total-found-{{ status.website_id }}">{{ status.current_session.total_products_found }}</span></p>
+                                    <p class="mb-1">Scraped: <span id="scraped-{{ status.website_id }}">{{ status.current_session.products_scraped }}</span></p>
+
+                                </div>
+                                <div class="w-50">
+
+                                    <p class="mb-1">Created: <span id="created-{{ status.website_id }}">{{ status.current_session.products_created }}</span></p>
+                                    <p class="mb-1">Updated: <span id="updated-{{ status.website_id }}">{{ status.current_session.products_updated }}</span></p>
+                                    <p class="mb-1">Failed: <span id="failed-{{ status.website_id }}">{{ status.current_session.products_failed }}</span></p>
+                                </div>
+                            </div>
                             {% if status.current_session.total_products_found > 0 %}
+                            <hr>
                                 <p class="mb-1">Progress: <span id="progress-text-{{ status.website_id }}">{{ status.current_session.products_scraped }}/{{ status.current_session.total_products_found }}</span></p>
                                 <div class="progress mb-2">
                                     <div class="progress-bar" role="progressbar" 

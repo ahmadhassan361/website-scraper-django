@@ -1,4 +1,4 @@
-from .tasks import scrape_waterdale_collection
+from .tasks import scrape_waterdale_collection, scrape_btshalom, scrape_malchutjudaica
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -8,6 +8,8 @@ import importlib
 # Website scraper function mapping
 SCRAPER_FUNCTIONS = {
     'waterdalecollection': scrape_waterdale_collection,
+    'btshalom': scrape_btshalom,
+    'malchutjudaica': scrape_malchutjudaica
 }
 
 def get_scraper_function(function_name):
@@ -225,6 +227,18 @@ def initialize_websites():
             'url': 'https://waterdalecollection.com',
             'is_active': True,
             'scraper_function': 'waterdalecollection'
+        },
+        {
+            'name': 'btshalom',
+            'url': 'https://btshalom.com',
+            'is_active': True,
+            'scraper_function': 'btshalom'
+        },
+        {
+            'name': 'malchutjudaica',
+            'url': 'https://malchutjudaica.com',
+            'is_active': True,
+            'scraper_function': 'malchutjudaica'
         }
     ]
     

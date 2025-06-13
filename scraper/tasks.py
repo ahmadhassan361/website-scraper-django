@@ -49,10 +49,12 @@ def extract_shopify_product_data(product_data, website_name):
         variants = product_data.get('variants', [])
         sku = ''
         price = ''
+        in_stock = False
         if variants:
             first_variant = variants[0]
             sku = first_variant.get('sku', '')
             price = first_variant.get('price', '')
+            in_stock = first_variant.get('available',False)
         
         # Extract all image URLs
         images = product_data.get('images', [])
@@ -73,6 +75,7 @@ def extract_shopify_product_data(product_data, website_name):
             'vendor': vendor,
             'category': product_type,
             'description': description,
+            'in_stock': in_stock,
             'link': product_url,
             'image_link': ', '.join(image_links),
             'website': website_name

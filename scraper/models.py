@@ -20,6 +20,7 @@ class Product(models.Model):
     name = models.CharField(max_length=300,null=True,blank=True)        # Item name
     sku = models.CharField(max_length=250, null=True, blank=True)       # Item number
     price = models.CharField(max_length=50, null=True, blank=True)      # price
+    vendor = models.CharField(max_length=50, null=True, blank=True)     # vendor
     category = models.CharField(max_length=50, null=True, blank=True)   # category
     description = models.TextField(null=True, blank=True)               # Description
     link = models.TextField(null=True, blank=True)                      #link

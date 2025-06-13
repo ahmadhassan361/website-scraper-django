@@ -36,8 +36,8 @@
                     <h5>Bulk Operations & Export</h5>
                 </div>
                 <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
+                    <div class="d-flex">
+                        <div class="">
                             <h6>Bulk Scraping Operations</h6>
                             <form method="post" action="{% url 'start_all_scraping' %}" style="display: inline;">
                                 {% csrf_token %}
@@ -48,13 +48,13 @@
                                 <button type="submit" class="btn btn-danger">Stop All Websites</button>
                             </form>
                         </div>
-                        <div class="col-md-6">
+                        <div class="ms-2 border-start border-1 ps-2">
                             <h6>Export Products</h6>
                             <div class="dropdown">
                                 <button class="btn btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown">
                                     Export Products
                                 </button>
-                                <ul class="dropdown-menu">
+                                <ul class="dropdown-menu" style="max-height: 60dvh; overflow-y: scroll;">
                                     <li><h6 class="dropdown-header">All Websites</h6></li>
                                     <li><a class="dropdown-item" href="{% url 'export_products' %}?format=csv&website_id=all">Download CSV</a></li>
                                     <li><a class="dropdown-item" href="{% url 'export_products' %}?format=excel&website_id=all">Download Excel</a></li>
@@ -75,15 +75,16 @@
     </div>
 
     <!-- Website Status Cards -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <h2>Website Scraping Status</h2>
-        </div>
+    <div class="col-12">
+        <h2>Website Scraping Status</h2>
+    </div>
+    <div class="row mb-4" >
         {% for status in website_statuses %}
         <div class="col-md-6 col-lg-4 mb-3">
             <div class="card h-100" id="website-card-{{ status.website_id }}">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">{{ status.website_name|title }}</h5>
+                    <a href="{{status.website_link}}" target="_blank" class="text-decoration-non btn p-0 m-0"><h5 class="mb-0">{{ status.website_name|title }}</h5></a>
+                    
                     <span class="badge {% if status.is_running %}bg-success{% else %}bg-secondary{% endif %}" id="status-badge-{{ status.website_id }}">
                         {% if status.is_running %}Running{% else %}Idle{% endif %}
                     </span>
@@ -153,9 +154,11 @@
     </div>
 
     <!-- Recent Session Groups -->
+    <div>
+        <h2>Recent Scraping Sessions</h2>
+    </div>
     <div class="row">
-        <div class="col-12">
-            <h3>Recent Scraping Sessions</h3>
+        <div class="col-12 p-2" style="max-height: 70dvh; overflow-y: scroll;">
             <div class="table-responsive">
                 <table class="table table-striped">
                     <thead>

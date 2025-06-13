@@ -1,4 +1,7 @@
-from .tasks import scrape_waterdale_collection, scrape_btshalom, scrape_malchutjudaica
+from .tasks import (scrape_waterdale_collection, scrape_btshalom,
+                    scrape_malchutjudaica, scrape_feldart, scrape_menuchapublishers,
+                    scrape_israelbookshoppublications, scrape_judaicapress,
+                    scrape_hausdecornj,scrape_majesticgiftware)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -9,7 +12,13 @@ import importlib
 SCRAPER_FUNCTIONS = {
     'waterdalecollection': scrape_waterdale_collection,
     'btshalom': scrape_btshalom,
-    'malchutjudaica': scrape_malchutjudaica
+    'malchutjudaica': scrape_malchutjudaica,
+    'feldart': scrape_feldart,
+    'menuchapublishers': scrape_menuchapublishers,
+    'israelbookshoppublications':scrape_israelbookshoppublications,
+    'judaicapress':scrape_judaicapress,
+    'hausdecornj':scrape_hausdecornj,
+    'majesticgiftware':scrape_majesticgiftware
 }
 
 def get_scraper_function(function_name):
@@ -161,6 +170,7 @@ def get_website_status(website_id):
         result = {
             'website_id': website.id,
             'website_name': website.name,
+            'website_link': website.url,
             'is_running': state.is_running,
             'last_run': state.last_run,
             'current_session': None
@@ -239,6 +249,42 @@ def initialize_websites():
             'url': 'https://malchutjudaica.com',
             'is_active': True,
             'scraper_function': 'malchutjudaica'
+        },
+        {
+            'name': 'feldart',
+            'url': 'https://feldart.com',
+            'is_active': True,
+            'scraper_function': 'feldart'
+        },
+        {
+            'name': 'menuchapublishers',
+            'url': 'https://menuchapublishers.com',
+            'is_active': True,
+            'scraper_function': 'menuchapublishers'
+        },
+        {
+            'name': 'israelbookshoppublications',
+            'url': 'https://israelbookshoppublications.com',
+            'is_active': True,
+            'scraper_function': 'israelbookshoppublications'
+        },
+        {
+            'name': 'judaicapress',
+            'url': 'https://judaicapress.com',
+            'is_active': True,
+            'scraper_function': 'judaicapress'
+        },
+        {
+            'name': 'hausdecornj',
+            'url': 'https://hausdecornj.com',
+            'is_active': True,
+            'scraper_function': 'hausdecornj'
+        },
+        {
+            'name': 'majesticgiftware',
+            'url': 'https://www.majesticgiftware.com',
+            'is_active': True,
+            'scraper_function': 'majesticgiftware'
         }
     ]
     

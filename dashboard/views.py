@@ -302,7 +302,7 @@ def _export_csv(products, filename):
     response['Content-Disposition'] = f'attachment; filename="{filename}.csv"'
     
     writer = csv.writer(response)
-    writer.writerow(['Website', 'Name', 'SKU', 'Price', 'Category', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At'])
+    writer.writerow(['Website', 'Name', 'SKU', 'Price', 'Category','Vendor', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At'])
     
     for product in products:
         writer.writerow([
@@ -311,6 +311,7 @@ def _export_csv(products, filename):
             product.sku,
             product.price,
             product.category,
+            product.vendor,
             product.description,
             product.image_link,
             product.link,
@@ -327,7 +328,7 @@ def _export_excel(products, filename):
     worksheet = workbook.add_worksheet('Products')
     
     # Add headers
-    headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Description','Image Link', 'Link', 'Created At', 'Updated At']
+    headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Description','Vendor','Image Link', 'Link', 'Created At', 'Updated At']
     for col, header in enumerate(headers):
         worksheet.write(0, col, header)
     
@@ -339,10 +340,11 @@ def _export_excel(products, filename):
         worksheet.write(row, 3, product.price or '')
         worksheet.write(row, 4, product.category or '')
         worksheet.write(row, 5, product.description or '')
-        worksheet.write(row, 6, product.image_link or '')
-        worksheet.write(row, 7, product.link or '')
-        worksheet.write(row, 8, product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '')
-        worksheet.write(row, 9, product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else '')
+        worksheet.write(row, 6, product.vendor or '')
+        worksheet.write(row, 7, product.image_link or '')
+        worksheet.write(row, 8, product.link or '')
+        worksheet.write(row, 9, product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '')
+        worksheet.write(row, 10, product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else '')
     
     workbook.close()
     output.seek(0)

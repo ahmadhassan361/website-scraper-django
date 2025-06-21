@@ -368,7 +368,7 @@ def _export_excel(products, filename):
     
     return response
 
-CHUNK_SIZE = 1000  # Safe batch size
+CHUNK_SIZE = 100  # Safe batch size
 
 def _export_to_google_sheet(products, filename):
     SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')

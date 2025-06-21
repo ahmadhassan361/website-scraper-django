@@ -22,39 +22,29 @@ def log_message(session, level, message, product_url=None, product_sku=None, exc
         exception_details=exception_details
     )
 
-def extract_shopify_product_data(product_data, website_name):
+def extract_shopify_product_variants(product_data, website_name):
     """
-    Common function to extract product data from Shopify JSON API response
+    Extract all variants from a Shopify product as separate product records
     
     Args:
         product_data: Single product object from Shopify JSON
         website_name: Name of the website
         
     Returns:
-        dict: Extracted product information
+        list: List of product dictionaries (one for each variant)
     """
     try:
-        # Extract basic product info
+        # Extract basic product info that's common to all variants
         title = product_data.get('title', '')
         vendor = product_data.get('vendor', '')
         product_type = product_data.get('product_type', '')
         body_html = product_data.get('body_html', '')
         handle = product_data.get('handle', '')
+        product_id = product_data.get('handle', 'id')
         
         # Clean description (remove HTML tags)
         import re
         description = re.sub(r'<[^>]+>', ' ', body_html).strip() if body_html else ''
-        
-        # Extract first variant data (SKU and price)
-        variants = product_data.get('variants', [])
-        sku = ''
-        price = ''
-        in_stock = False
-        if variants:
-            first_variant = variants[0]
-            sku = first_variant.get('sku', '')
-            price = first_variant.get('price', '')
-            in_stock = first_variant.get('available',False)
         
         # Extract all image URLs
         images = product_data.get('images', [])
@@ -65,24 +55,69 @@ def extract_shopify_product_data(product_data, website_name):
                 image_links.append(src)
         
         # Create product URL from handle
-        # This will need to be customized per website
         product_url = f"https://{website_name}.com/products/{handle}"
         
-        return {
-            'name': title,
-            'sku': sku,
-            'price': price,
-            'vendor': vendor,
-            'category': product_type,
-            'description': description,
-            'in_stock': in_stock,
-            'link': product_url,
-            'image_link': ', '.join(image_links),
-            'website': website_name
-        }
+        # Extract all variants as separate products
+        variants = product_data.get('variants', [])
+        product_variants = []
+        
+        if not variants:
+            # If no variants, create a single product with basic info
+            product_variants.append({
+                'name': title,
+                'product_variant_id':product_id,
+                'sku': '',
+                'price': '',
+                'vendor': vendor,
+                'category': product_type,
+                'description': description,
+                'in_stock': False,
+                'link': product_url,
+                'image_link': ', '.join(image_links),
+                'website': website_name
+            })
+        else:
+            # Create a separate product for each variant
+            for variant in variants:
+                variant_sku = variant.get('sku', '')
+                variant_price = variant.get('price', '')
+                variant_id = variant.get('id', None)
+                variant_available = variant.get('available', False)
+                
+                # Build variant name
+                variant_title = title
+                
+                # Add variant options to the name if they exist
+                variant_options = []
+                if variant.get('option1') and variant.get('option1') != 'Default Title':
+                    variant_options.append(variant.get('option1'))
+                if variant.get('option2'):
+                    variant_options.append(variant.get('option2'))
+                if variant.get('option3'):
+                    variant_options.append(variant.get('option3'))
+                
+                if variant_options:
+                    variant_title = f"{title} - {' / '.join(variant_options)}"
+                
+                product_variants.append({
+                    'product_variant_id':variant_id,
+                    'name': variant_title,
+                    'sku': variant_sku,
+                    'price': variant_price,
+                    'vendor': vendor,
+                    'category': product_type,
+                    'description': description,
+                    'in_stock': variant_available,
+                    'link': product_url,
+                    'image_link': ', '.join(image_links),
+                    'website': website_name
+                })
+        
+        return product_variants
+        
     except Exception as e:
-        print(f"Error extracting product data: {e}")
-        return None
+        print(f"Error extracting product variants: {e}")
+        return []
 
 def scrape_shopify_products_common(session, website_base_url, custom_domain=None):
     """
@@ -138,107 +173,113 @@ def scrape_shopify_products_common(session, website_base_url, custom_domain=None
             for idx, product_data in enumerate(products):
                 try:
                     # Extract product information
-                    product_info = extract_shopify_product_data(product_data, session.website.name)
+                    product_info = extract_shopify_product_variants(product_data, session.website.name)
                     
                     if not product_info:
                         session.products_failed += 1
                         continue
                     
                     # Save or update product with robust error handling
-                    try:
-                        if product_info['sku']:
-                            # Try to get by SKU first
-                            try:
-                                product = Product.objects.get(
-                                    website=session.website.name,
-                                    sku=product_info['sku']
-                                )
-                                # Update existing product
-                                for key, value in product_info.items():
-                                    if key not in ['website']:
-                                        setattr(product, key, value)
-                                product.save()
-                                session.products_updated += 1
-                                log_message(session, 'success', f'Updated product: {product_info["name"]}', 
-                                          product_url=product_info['link'], product_sku=product_info['sku'])
-                            except Product.DoesNotExist:
-                                # Create new product
+                    for prod_variant in product_info:
+                        try:
+                            if prod_variant['sku']:
+                                # Try to get by SKU first
                                 try:
-                                    product = Product.objects.create(**product_info)
-                                    session.products_created += 1
-                                    log_message(session, 'success', f'Created new product: {product_info["name"]}', 
-                                              product_url=product_info['link'], product_sku=product_info['sku'])
-                                except Exception as create_error:
-                                    # Handle race condition - try to get again
+                                    product = Product.objects.get(
+                                        # website=session.website.name,
+                                        product_variant_id=prod_variant['product_variant_id']
+                                    )
+                                    # Update existing product
+                                    for key, value in prod_variant.items():
+                                        if key not in ['website']:
+                                            setattr(product, key, value)
+                                    product.save()
+                                    session.products_updated += 1
+                                    log_message(session, 'success', f'Updated product: {prod_variant["name"]}', 
+                                            product_url=prod_variant['link'], product_sku=prod_variant['sku'])
+                                except Product.DoesNotExist:
+                                    # Create new product
                                     try:
-                                        product = Product.objects.get(
-                                            website=session.website.name,
-                                            sku=product_info['sku']
-                                        )
-                                        # Update existing product
-                                        for key, value in product_info.items():
-                                            if key not in ['website']:
-                                                setattr(product, key, value)
-                                        product.save()
-                                        session.products_updated += 1
-                                        log_message(session, 'success', f'Updated product (race condition): {product_info["name"]}', 
-                                                  product_url=product_info['link'], product_sku=product_info['sku'])
-                                    except:
-                                        raise create_error
-                        else:
-                            # No SKU, try by link
-                            try:
-                                product = Product.objects.get(
-                                    website=session.website.name,
-                                    link=product_info['link']
-                                )
-                                # Update existing product
-                                for key, value in product_info.items():
-                                    if key not in ['website']:
-                                        setattr(product, key, value)
-                                product.save()
-                                session.products_updated += 1
-                                log_message(session, 'success', f'Updated product: {product_info["name"]}', 
-                                          product_url=product_info['link'], product_sku=product_info['sku'])
-                            except Product.DoesNotExist:
-                                # Create new product
+                                        product = Product.objects.create(**prod_variant)
+                                        session.products_created += 1
+                                        log_message(session, 'success', f'Created new product: {prod_variant["name"]} {prod_variant["id"]}', 
+                                                product_url=prod_variant['link'], product_sku=prod_variant['sku'])
+                                    except Exception as create_error:
+                                        # Handle race condition - try to get again
+                                        try:
+                                            product = Product.objects.get(
+                                                product_variant_id=prod_variant['product_variant_id']
+
+                                                # website=session.website.name,
+                                                # sku=prod_variant['sku']
+                                            )
+                                            # Update existing product
+                                            for key, value in prod_variant.items():
+                                                if key not in ['website']:
+                                                    setattr(product, key, value)
+                                            product.save()
+                                            session.products_updated += 1
+                                            log_message(session, 'success', f'Updated product (race condition): {prod_variant["name"]}', 
+                                                    product_url=prod_variant['link'], product_sku=prod_variant['sku'])
+                                        except:
+                                            raise create_error
+                            else:
+                                # No SKU, try by link
                                 try:
-                                    product = Product.objects.create(**product_info)
-                                    session.products_created += 1
-                                    log_message(session, 'success', f'Created new product: {product_info["name"]}', 
-                                              product_url=product_info['link'], product_sku=product_info['sku'])
-                                except Exception as create_error:
-                                    # Handle race condition - try to get again
+                                    product = Product.objects.get(
+                                        # website=session.website.name,
+                                        # link=prod_variant['link']
+                                        product_variant_id=prod_variant['product_variant_id']
+                                    )
+                                    # Update existing product
+                                    for key, value in prod_variant.items():
+                                        if key not in ['website']:
+                                            setattr(product, key, value)
+                                    product.save()
+                                    session.products_updated += 1
+                                    log_message(session, 'success', f'Updated product: {prod_variant["name"]}', 
+                                            product_url=prod_variant['link'], product_sku=prod_variant['sku'])
+                                except Product.DoesNotExist:
+                                    # Create new product
                                     try:
-                                        product = Product.objects.get(
-                                            website=session.website.name,
-                                            link=product_info['link']
-                                        )
-                                        # Update existing product
-                                        for key, value in product_info.items():
-                                            if key not in ['website']:
-                                                setattr(product, key, value)
-                                        product.save()
-                                        session.products_updated += 1
-                                        log_message(session, 'success', f'Updated product (race condition): {product_info["name"]}', 
-                                                  product_url=product_info['link'], product_sku=product_info['sku'])
-                                    except:
-                                        raise create_error
-                        
-                        session.products_scraped += 1
-                        total_scraped += 1
-                        
-                        # Update session progress
-                        session.last_processed_index = total_scraped
-                        session.last_processed_url = url
-                        session.save()
-                        
-                    except Exception as db_error:
-                        session.products_failed += 1
-                        log_message(session, 'error', f'Database error for product: {str(db_error)}', 
-                                  product_url=product_info['link'], product_sku=product_info['sku'], 
-                                  exception_details=traceback.format_exc())
-                        continue
+                                        product = Product.objects.create(**prod_variant)
+                                        session.products_created += 1
+                                        log_message(session, 'success', f'Created new product: {prod_variant["name"]}', 
+                                                product_url=prod_variant['link'], product_sku=prod_variant['sku'])
+                                    except Exception as create_error:
+                                        # Handle race condition - try to get again
+                                        try:
+                                            product = Product.objects.get(
+                                                product_variant_id=prod_variant['product_variant_id']
+
+                                                # website=session.website.name,
+                                                # link=prod_variant['link']
+                                            )
+                                            # Update existing product
+                                            for key, value in prod_variant.items():
+                                                if key not in ['website']:
+                                                    setattr(product, key, value)
+                                            product.save()
+                                            session.products_updated += 1
+                                            log_message(session, 'success', f'Updated product (race condition): {prod_variant["name"]}', 
+                                                    product_url=prod_variant['link'], product_sku=prod_variant['sku'])
+                                        except:
+                                            raise create_error
+                            
+                            session.products_scraped += 1
+                            total_scraped += 1
+                            
+                            # Update session progress
+                            session.last_processed_index = total_scraped
+                            session.last_processed_url = url
+                            session.save()
+                            
+                        except Exception as db_error:
+                            session.products_failed += 1
+                            log_message(session, 'error', f'Database error for product: {str(db_error)}', 
+                                    product_url=prod_variant['link'], product_sku=prod_variant['sku'], 
+                                    exception_details=traceback.format_exc())
+                            continue
                     
                 except Exception as product_error:
                     session.products_failed += 1
@@ -331,7 +372,7 @@ def scrape_shopify_website_common(session_id, website_config, task_instance, res
             session.save()
             
             # Schedule auto-resume task with a 30-second delay
-            scrape_shopify_website.apply_async(
+            scrape_shopify_website_common.apply_async(
                 args=[session_id, website_config, 1],  # Resume from page 1 for now
                 countdown=30  # Wait 30 seconds before resuming
             )
@@ -562,4 +603,3 @@ def scrape_majesticgiftware(self, session_id, resume_from_page=1):
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
-

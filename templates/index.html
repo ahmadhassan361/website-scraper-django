@@ -22,10 +22,20 @@
     {% if messages %}
         {% for message in messages %}
             <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                {{ message }}
+                {{ message|safe }}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         {% endfor %}
+        <script>
+            // Wait a short moment to ensure DOM is ready
+            window.addEventListener('load', () => {
+                const linkEl = document.getElementById('open_sheet_link');
+                if (linkEl) {
+                    const url = linkEl.href;
+                    window.open(url, '_blank');
+                }
+            });
+        </script>
     {% endif %}
 
     <!-- Bulk Operations and Export -->
@@ -56,11 +66,13 @@
                                 </button>
                                 <ul class="dropdown-menu" style="max-height: 60dvh; overflow-y: scroll;">
                                     <li><h6 class="dropdown-header">All Websites</h6></li>
+                                    <li><a class="dropdown-item" href="{% url 'export_products' %}?format=google_sheet&website_id=all">Export to Google Sheet</a></li>
                                     <li><a class="dropdown-item" href="{% url 'export_products' %}?format=csv&website_id=all">Download CSV</a></li>
                                     <li><a class="dropdown-item" href="{% url 'export_products' %}?format=excel&website_id=all">Download Excel</a></li>
                                     <li><hr class="dropdown-divider"></li>
                                     {% for website in websites %}
                                     <li><h6 class="dropdown-header">{{ website.name|title }}</h6></li>
+                                    <li><a class="dropdown-item" href="{% url 'export_products' %}?format=google_sheet&website_id={{ website.id }}">{{ website.name|title }} to Goole Sheet</a></li>
                                     <li><a class="dropdown-item" href="{% url 'export_products' %}?format=csv&website_id={{ website.id }}">{{ website.name|title }} CSV</a></li>
                                     <li><a class="dropdown-item" href="{% url 'export_products' %}?format=excel&website_id={{ website.id }}">{{ website.name|title }} Excel</a></li>
                                     {% if not forloop.last %}<li><hr class="dropdown-divider"></li>{% endif %}

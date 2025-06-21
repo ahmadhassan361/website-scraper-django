@@ -15,7 +15,13 @@ class Website(models.Model):
     def __str__(self):
         return self.name
 
+class GoogleSheetLinks(models.Model):
+    link = models.TextField(null=True, blank=True)                # image_link
+    created_at = models.DateTimeField(auto_now_add=True)                # created_at
+    updated_at = models.DateTimeField(auto_now=True)                    # updated_at
+
 class Product(models.Model):
+    product_variant_id = models.CharField(max_length=300,null=True,blank=True,unique=True)     # website
     website = models.CharField(max_length=300,null=True,blank=True)     # website
     name = models.CharField(max_length=300,null=True,blank=True)        # Item name
     sku = models.CharField(max_length=250, null=True, blank=True)       # Item number
@@ -29,9 +35,9 @@ class Product(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)                # created_at
     updated_at = models.DateTimeField(auto_now=True)                    # updated_at
     
-    class Meta:
+    # class Meta:
         # Ensure unique products per website based on SKU or link
-        unique_together = [['website', 'sku'], ['website', 'link']]
+        # unique_together = [['website', 'sku'], ['website', 'link']]
     
     def __str__(self):
         return f"{self.website} - {self.name}"
@@ -109,3 +115,5 @@ class ScrapingState(models.Model):
     
     def __str__(self):
         return f"{self.website.name} - {'Running' if self.is_running else 'Idle'}"
+
+

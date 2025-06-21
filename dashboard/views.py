@@ -368,8 +368,9 @@ def _export_excel(products, filename):
     
     return response
 
+CHUNK_SIZE = 1000  # Safe batch size
+
 def _export_to_google_sheet(products, filename):
-    """Export products to a new Google Sheet and return the public link"""
     SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')
 
     SCOPES = [
@@ -379,8 +380,16 @@ def _export_to_google_sheet(products, filename):
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 
-    # Prepare data
-    headers = ['Website', 'Name', 'SKU', 'Price', 'Category','Vendor','InStock', 'Description', 'Image Link','Link', 'Created At', 'Updated At']
+    # Create the spreadsheet
+    sheet_service = build('sheets', 'v4', credentials=creds)
+    sheet = sheet_service.spreadsheets().create(
+        body={'properties': {'title': filename}},
+        fields='spreadsheetId'
+    ).execute()
+    spreadsheet_id = sheet['spreadsheetId']
+
+    # Build values
+    headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Vendor', 'InStock', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At']
     values = [headers]
 
     for product in products:
@@ -399,35 +408,88 @@ def _export_to_google_sheet(products, filename):
             product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else ''
         ])
 
-    # Create spreadsheet
-    sheet_service = build('sheets', 'v4', credentials=creds)
-    sheet = sheet_service.spreadsheets().create(
-        body={'properties': {'title': filename}},
-        fields='spreadsheetId'
-    ).execute()
-    spreadsheet_id = sheet['spreadsheetId']
+    # Chunked upload
+    for i in range(0, len(values), CHUNK_SIZE):
+        chunk = values[i:i+CHUNK_SIZE]
+        sheet_service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range='Sheet1',
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body={'values': chunk}
+        ).execute()
 
-    # Upload data
-    sheet_service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range='Sheet1!A1',
-        valueInputOption='RAW',
-        body={'values': values}
-    ).execute()
-
-    # Make sheet public
+    # Make it public
     drive_service = build('drive', 'v3', credentials=creds)
     drive_service.permissions().create(
         fileId=spreadsheet_id,
-        body={'type': 'anyone', 'role': 'reader'}
+        body={'type': 'anyone', 'role': 'editor'}
     ).execute()
 
     link = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
-
-    # Save to DB
+    from dashboard.models import GoogleSheetLinks
     GoogleSheetLinks.objects.create(link=link)
-
     return link
+# def _export_to_google_sheet(products, filename):
+#     """Export products to a new Google Sheet and return the public link"""
+#     SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')
+
+#     SCOPES = [
+#         'https://www.googleapis.com/auth/spreadsheets',
+#         'https://www.googleapis.com/auth/drive'
+#     ]
+#     creds = service_account.Credentials.from_service_account_file(
+#         SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+#     # Prepare data
+#     headers = ['Website', 'Name', 'SKU', 'Price', 'Category','Vendor','InStock', 'Description', 'Image Link','Link', 'Created At', 'Updated At']
+#     values = [headers]
+
+#     for product in products:
+#         values.append([
+#             product.website,
+#             product.name,
+#             product.sku,
+#             product.price,
+#             product.category,
+#             product.vendor,
+#             "Yes" if product.in_stock else "No",
+#             product.description,
+#             product.image_link,
+#             product.link,
+#             product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '',
+#             product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else ''
+#         ])
+
+#     # Create spreadsheet
+#     sheet_service = build('sheets', 'v4', credentials=creds)
+#     sheet = sheet_service.spreadsheets().create(
+#         body={'properties': {'title': filename}},
+#         fields='spreadsheetId'
+#     ).execute()
+#     spreadsheet_id = sheet['spreadsheetId']
+
+#     # Upload data
+#     sheet_service.spreadsheets().values().update(
+#         spreadsheetId=spreadsheet_id,
+#         range='Sheet1!A1',
+#         valueInputOption='RAW',
+#         body={'values': values}
+#     ).execute()
+
+#     # Make sheet public
+#     drive_service = build('drive', 'v3', credentials=creds)
+#     drive_service.permissions().create(
+#         fileId=spreadsheet_id,
+#         body={'type': 'anyone', 'role': 'reader'}
+#     ).execute()
+
+#     link = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+
+#     # Save to DB
+#     GoogleSheetLinks.objects.create(link=link)
+
+#     return link
 
 @login_required(login_url='login')
 def session_history(request, website_id):

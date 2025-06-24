@@ -16,9 +16,31 @@ class Website(models.Model):
         return self.name
 
 class GoogleSheetLinks(models.Model):
-    link = models.TextField(null=True, blank=True)                # image_link
-    created_at = models.DateTimeField(auto_now_add=True)                # created_at
-    updated_at = models.DateTimeField(auto_now=True)                    # updated_at
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    link = models.TextField(null=True, blank=True)                # Google Sheet link
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    celery_task_id = models.CharField(max_length=255, null=True, blank=True)
+    filename = models.CharField(max_length=300, null=True, blank=True)
+    total_products = models.IntegerField(default=0)
+    processed_products = models.IntegerField(default=0)
+    progress_percentage = models.IntegerField(default=0)
+    error_message = models.TextField(null=True, blank=True)
+    website_filter = models.CharField(max_length=100, null=True, blank=True)  # 'all' or website name
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Export {self.id} - {self.status} - {self.created_at}"
 
 class Product(models.Model):
     product_variant_id = models.CharField(max_length=300,null=True,blank=True,unique=True)     # website
@@ -115,5 +137,3 @@ class ScrapingState(models.Model):
     
     def __str__(self):
         return f"{self.website.name} - {'Running' if self.is_running else 'Idle'}"
-
-

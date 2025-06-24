@@ -45,6 +45,8 @@ urlpatterns = [
     
     # Export Functionality
     path('export-products/', export_products, name='export_products'),
+    path('export-status/<int:export_id>/', export_status, name='export_status'),
+    path('cancel-export/<int:export_id>/', cancel_export, name='cancel_export'),
     
     # Status and Monitoring
     path('website-status/<int:website_id>/', website_status, name='website_status'),

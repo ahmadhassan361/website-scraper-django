@@ -61,8 +61,9 @@
                         <div class="ms-2 border-start border-1 ps-2">
                             <h6>Export Products</h6>
                             <div class="dropdown">
-                                <button class="btn btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                    Export Products
+                                <button class="btn btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown" 
+                                        {% if current_export %}disabled{% endif %}>
+                                    {% if current_export %}Exporting...{% else %}Export Products{% endif %}
                                 </button>
                                 <ul class="dropdown-menu" style="max-height: 60dvh; overflow-y: scroll;">
                                     <li><h6 class="dropdown-header">All Websites</h6></li>
@@ -85,6 +86,105 @@
             </div>
         </div>
     </div>
+
+    <!-- Google Sheet Export Status -->
+    {% if current_export or latest_export %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Google Sheet Export Status</h5>
+                </div>
+                <div class="card-body">
+                    <!-- Current Export -->
+                    {% if current_export %}
+                    <div class="mb-3" id="current-export-section">
+                        <h6 class="text-primary">Current Export in Progress</h6>
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span><strong>Status:</strong> <span class="badge bg-warning" id="export-status">{{ current_export.status|title }}</span></span>
+                                    <span><strong>Progress:</strong> <span id="export-progress-text">{{ current_export.progress_percentage }}%</span></span>
+                                </div>
+                                <div class="progress mb-2">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                         role="progressbar" 
+                                         style="width: {{ current_export.progress_percentage }}%"
+                                         id="export-progress-bar">
+                                        {{ current_export.progress_percentage }}%
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <small class="text-muted">
+                                            Products: <span id="export-products-count">{{ current_export.processed_products }}/{{ current_export.total_products }}</span><br>
+                                            Filter: <span id="export-filter">{{ current_export.website_filter|default:"All Websites" }}</span>
+                                        </small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <small class="text-muted">
+                                            Started: {{ current_export.created_at|date:"M d, Y H:i" }}<br>
+                                            Filename: <span id="export-filename">{{ current_export.filename|default:"Generating..." }}</span>
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <button class="btn btn-outline-danger btn-sm" onclick="cancelExport({{ current_export.id }})">
+                                    Cancel Export
+                                </button>
+                                <div id="export-error-message" class="text-danger mt-2" style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
+                    <!-- Latest Completed Export -->
+                    {% if latest_export %}
+                    <div {% if current_export %}class="border-top pt-3"{% endif %}>
+                        <h6 class="text-success">Latest Completed Export</h6>
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-2">
+                                    <strong>Google Sheet Link:</strong>
+                                    <a href="{{ latest_export.link }}" target="_blank" class="btn btn-outline-success btn-sm ms-2">
+                                        Open Google Sheet
+                                    </a>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <small class="text-muted">
+                                            Products Exported: {{ latest_export.total_products }}<br>
+                                            Filter: {{ latest_export.website_filter|default:"All Websites" }}
+                                        </small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <small class="text-muted">
+                                            Completed: {{ latest_export.completed_at|date:"M d, Y H:i" }}<br>
+                                            Filename: {{ latest_export.filename }}
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <small class="text-muted">
+                                    Duration: 
+                                    {% if latest_export.completed_at and latest_export.created_at %}
+                                        {% load humanize %}
+                                        {{ latest_export.completed_at|timesince:latest_export.created_at }}
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Website Status Cards -->
     <div class="col-12">
@@ -327,6 +427,120 @@ function refreshWebsiteStatus(websiteId) {
         .catch(error => console.error('Error refreshing status:', error));
 }
 
+// Export status refresh functionality
+function refreshExportStatus() {
+    {% if current_export %}
+    fetch(`/export-status/{{ current_export.id }}/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Export not found');
+                return;
+            }
+
+            // Update status badge
+            const statusElement = document.getElementById('export-status');
+            if (statusElement) {
+                statusElement.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
+                
+                // Update badge color based on status
+                statusElement.className = 'badge ';
+                if (data.status === 'completed') {
+                    statusElement.className += 'bg-success';
+                } else if (data.status === 'failed') {
+                    statusElement.className += 'bg-danger';
+                } else if (data.status === 'processing') {
+                    statusElement.className += 'bg-primary';
+                } else {
+                    statusElement.className += 'bg-warning';
+                }
+            }
+
+            // Update progress
+            const progressBar = document.getElementById('export-progress-bar');
+            const progressText = document.getElementById('export-progress-text');
+            if (progressBar && progressText) {
+                progressBar.style.width = data.progress_percentage + '%';
+                progressBar.textContent = data.progress_percentage + '%';
+                progressText.textContent = data.progress_percentage + '%';
+            }
+
+            // Update product counts
+            const productsCount = document.getElementById('export-products-count');
+            if (productsCount) {
+                productsCount.textContent = `${data.processed_products}/${data.total_products}`;
+            }
+
+            // Update filename
+            const filename = document.getElementById('export-filename');
+            if (filename && data.filename) {
+                filename.textContent = data.filename;
+            }
+
+            // Handle completion or failure
+            if (data.status === 'completed') {
+                // Remove animated progress bar
+                if (progressBar) {
+                    progressBar.classList.remove('progress-bar-animated');
+                    progressBar.classList.add('bg-success');
+                }
+                
+                // Refresh page to show completed export
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+            } else if (data.status === 'failed') {
+                // Show error message
+                const errorElement = document.getElementById('export-error-message');
+                if (errorElement && data.error_message) {
+                    errorElement.textContent = 'Error: ' + data.error_message;
+                    errorElement.style.display = 'block';
+                }
+                
+                // Remove animated progress bar
+                if (progressBar) {
+                    progressBar.classList.remove('progress-bar-animated');
+                    progressBar.classList.add('bg-danger');
+                }
+                
+                // Refresh page to remove failed export
+                setTimeout(() => {
+                    window.location.reload();
+                }, 3000);
+            }
+        })
+        .catch(error => console.error('Error refreshing export status:', error));
+    {% endif %}
+}
+
+// Cancel export functionality
+function cancelExport(exportId) {
+    if (!confirm('Are you sure you want to cancel this export?')) {
+        return;
+    }
+
+    fetch(`/cancel-export/${exportId}/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Export cancelled successfully');
+            window.location.reload();
+        } else {
+            alert('Failed to cancel export: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error cancelling export:', error);
+        alert('Error cancelling export');
+    });
+}
+
 // Auto-refresh every 30 seconds for running websites
 setInterval(() => {
     {% for status in website_statuses %}
@@ -335,6 +549,11 @@ setInterval(() => {
         {% endif %}
     {% endfor %}
 }, 30000);
+
+// Auto-refresh export status every 5 seconds if export is running
+{% if current_export %}
+setInterval(refreshExportStatus, 5000);
+{% endif %}
 </script>
 
 {% endblock main %}

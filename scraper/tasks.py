@@ -644,3 +644,170 @@ def scrape_torahjudaica(self, session_id, resume_from_page=1):
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
+@shared_task(bind=True, soft_time_limit=3600, time_limit=3660)
+def export_products_to_google_sheet(self, export_id, website_filter='all'):
+    """
+    Export products to Google Sheet in background with progress tracking
+    
+    Args:
+        export_id: ID of the GoogleSheetLinks record
+        website_filter: 'all' or specific website name
+    """
+    import os
+    import xlsxwriter
+    from io import BytesIO
+    from django.conf import settings
+    from django.utils import timezone
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    
+    try:
+        # Get the export record
+        export_record = GoogleSheetLinks.objects.get(id=export_id)
+        
+        # Update status to processing
+        export_record.status = 'processing'
+        export_record.celery_task_id = self.request.id
+        export_record.save()
+        
+        # Get products based on filter
+        if website_filter == 'all':
+            products = Product.objects.all().order_by('website', 'created_at')
+            filename = f"all_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+        else:
+            products = Product.objects.filter(website=website_filter).order_by('created_at')
+            filename = f"{website_filter}_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Update total products count
+        total_products = products.count()
+        export_record.total_products = total_products
+        export_record.filename = filename
+        export_record.save()
+        
+        if total_products == 0:
+            export_record.status = 'failed'
+            export_record.error_message = 'No products found to export'
+            export_record.save()
+            return {'status': 'failed', 'message': 'No products found to export'}
+        
+        # Create Excel file in memory
+        output = BytesIO()
+        workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+        worksheet = workbook.add_worksheet('Products')
+        
+        # Add headers
+        headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Vendor', 'InStock', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At']
+        for col, header in enumerate(headers):
+            worksheet.write(0, col, header)
+        
+        # Process products in batches
+        batch_size = 100
+        processed_count = 0
+        
+        for i in range(0, total_products, batch_size):
+            batch_products = products[i:i + batch_size]
+            
+            for row_offset, product in enumerate(batch_products):
+                row = i + row_offset + 1  # +1 for header row
+                
+                worksheet.write(row, 0, product.website or '')
+                worksheet.write(row, 1, product.name or '')
+                worksheet.write(row, 2, product.sku or '')
+                worksheet.write(row, 3, product.price or '')
+                worksheet.write(row, 4, product.category or '')
+                worksheet.write(row, 5, product.vendor or '')
+                worksheet.write(row, 6, "Yes" if product.in_stock else "No")
+                worksheet.write(row, 7, product.description or '')
+                worksheet.write_string(row, 8, ", ".join(product.image_link.split(",")[:2]) if product.image_link else '')
+                worksheet.write(row, 9, product.link or '')
+                worksheet.write(row, 10, product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '')
+                worksheet.write(row, 11, product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else '')
+                
+                processed_count += 1
+                
+                # Update progress every 10 products
+                if processed_count % 10 == 0:
+                    progress = int((processed_count / total_products) * 80)  # 80% for processing data
+                    export_record.processed_products = processed_count
+                    export_record.progress_percentage = progress
+                    export_record.save()
+        
+        workbook.close()
+        output.seek(0)
+        
+        # Update progress to 80% (data processing complete)
+        export_record.progress_percentage = 80
+        export_record.save()
+        
+        # Upload to Google Drive
+        SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')
+        
+        if not os.path.exists(SERVICE_ACCOUNT_FILE):
+            export_record.status = 'failed'
+            export_record.error_message = 'Google Service Account credentials not found'
+            export_record.save()
+            return {'status': 'failed', 'message': 'Google Service Account credentials not found'}
+        
+        SCOPES = ['https://www.googleapis.com/auth/drive']
+        creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        
+        # Update progress to 85% (uploading)
+        export_record.progress_percentage = 85
+        export_record.save()
+        
+        # Upload to Google Drive and convert to Google Sheet
+        drive_service = build('drive', 'v3', credentials=creds)
+        media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        
+        file_metadata = {
+            'name': filename,
+            'mimeType': 'application/vnd.google-apps.spreadsheet'  # Convert to Google Sheet
+        }
+        
+        uploaded_file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+        
+        file_id = uploaded_file.get('id')
+        
+        # Update progress to 95% (making public)
+        export_record.progress_percentage = 95
+        export_record.save()
+        
+        # Make it public
+        drive_service.permissions().create(
+            fileId=file_id,
+            body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+        
+        # Generate public link
+        link = f"https://docs.google.com/spreadsheets/d/{file_id}"
+        
+        # Update export record with completion
+        export_record.status = 'completed'
+        export_record.link = link
+        export_record.progress_percentage = 100
+        export_record.completed_at = timezone.now()
+        export_record.save()
+        
+        return {
+            'status': 'completed',
+            'link': link,
+            'total_products': total_products,
+            'message': f'Successfully exported {total_products} products to Google Sheet'
+        }
+        
+    except Exception as e:
+        # Handle any errors
+        try:
+            export_record.status = 'failed'
+            export_record.error_message = str(e)
+            export_record.save()
+        except:
+            pass
+        
+        return {'status': 'failed', 'message': str(e)}

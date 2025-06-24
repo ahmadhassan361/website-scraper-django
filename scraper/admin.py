@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Website, Product, ScrapingSession, ScrapingLog, ScrapingState
+from .models import Website, Product, ScrapingSession, ScrapingLog, ScrapingState,GoogleSheetLinks
 
 @admin.register(Website)
 class WebsiteAdmin(admin.ModelAdmin):
@@ -54,3 +54,6 @@ class ScrapingStateAdmin(admin.ModelAdmin):
     list_display = ['website', 'is_running', 'current_session', 'last_run']
     list_filter = ['is_running', 'last_run']
     readonly_fields = ['last_run']
+@admin.register(GoogleSheetLinks)
+class GoogleSheetAdmin(admin.ModelAdmin):
+    list_display = ['link', 'status']

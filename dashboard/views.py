@@ -95,10 +95,16 @@ def home(request):
         if len(session_groups) >= 10:
             break
     
+    # Get Google Sheet export status
+    current_export = GoogleSheetLinks.objects.filter(status__in=['pending', 'processing']).first()
+    latest_export = GoogleSheetLinks.objects.filter(status='completed').first()
+    
     context = {
         'websites': websites,
         'website_statuses': website_statuses,
         'session_groups': session_groups,
+        'current_export': current_export,
+        'latest_export': latest_export,
     }
     
     return render(request, 'index.html', context)
@@ -300,11 +306,36 @@ def export_products(request):
     if format_type == 'excel':
         return _export_excel(products, filename)
     elif format_type == 'google_sheet':
-        link = _export_to_google_sheet(products, filename)
-        messages.success(request, f'<a href="{link}" target="_blank" id="open_sheet_link">{link}</a>')
-        return redirect('home')
+        return _export_google_sheet_background(request, website_id)
     else:
         return _export_csv(products, filename)
+
+def _export_google_sheet_background(request, website_filter='all'):
+    """Start Google Sheet export in background using Celery"""
+    from scraper.tasks import export_products_to_google_sheet
+    
+    # Check if there's already an export running
+    current_export = GoogleSheetLinks.objects.filter(status__in=['pending', 'processing']).first()
+    
+    if current_export:
+        messages.warning(request, "An export is already in progress. Please wait for it to complete.")
+        return redirect('home')
+    
+    # Create new export record
+    export_record = GoogleSheetLinks.objects.create(
+        status='pending',
+        website_filter=website_filter if website_filter != 'all' else 'all'
+    )
+    
+    # Start background task
+    task = export_products_to_google_sheet.delay(export_record.id, website_filter)
+    
+    # Update with task ID
+    export_record.celery_task_id = task.id
+    export_record.save()
+    
+    messages.info(request, "Google Sheet export started in background. Check the status on the homepage.")
+    return redirect('home')
 
 def _export_csv(products, filename):
     """Export products to CSV format"""
@@ -629,8 +660,55 @@ def session_history(request, website_id):
     except Website.DoesNotExist:
         return JsonResponse({'error': 'Website not found'}, status=404)
 
+@login_required(login_url='login')
+def export_status(request, export_id):
+    """Get export status (AJAX endpoint)"""
+    try:
+        export_record = GoogleSheetLinks.objects.get(id=export_id)
+        
+        return JsonResponse({
+            'id': export_record.id,
+            'status': export_record.status,
+            'progress_percentage': export_record.progress_percentage,
+            'total_products': export_record.total_products,
+            'processed_products': export_record.processed_products,
+            'filename': export_record.filename,
+            'link': export_record.link,
+            'error_message': export_record.error_message,
+            'created_at': export_record.created_at.isoformat(),
+            'completed_at': export_record.completed_at.isoformat() if export_record.completed_at else None,
+        })
+    except GoogleSheetLinks.DoesNotExist:
+        return JsonResponse({'error': 'Export not found'}, status=404)
+
+@login_required(login_url='login')
+def cancel_export(request, export_id):
+    """Cancel ongoing export (AJAX endpoint)"""
+    if request.method == 'POST':
+        try:
+            export_record = GoogleSheetLinks.objects.get(id=export_id)
+            
+            if export_record.status in ['pending', 'processing']:
+                # Try to revoke the Celery task
+                if export_record.celery_task_id:
+                    from celery import current_app
+                    current_app.control.revoke(export_record.celery_task_id, terminate=True)
+                
+                # Update status
+                export_record.status = 'failed'
+                export_record.error_message = 'Export cancelled by user'
+                export_record.save()
+                
+                return JsonResponse({'success': True, 'message': 'Export cancelled successfully'})
+            else:
+                return JsonResponse({'success': False, 'message': 'Export cannot be cancelled'})
+                
+        except GoogleSheetLinks.DoesNotExist:
+            return JsonResponse({'error': 'Export not found'}, status=404)
+    
+    return JsonResponse({'error': 'Invalid request method'}, status=405)
+
 def user_logout(request):
     """User logout view"""
     logout(request)
     return redirect('login')
-

@@ -603,3 +603,44 @@ def scrape_majesticgiftware(self, session_id, resume_from_page=1):
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_sephardicwarehouse(self, session_id, resume_from_page=1):
+    """Scraper for sephardicwarehouse with queue management"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_feldart.apply_async(
+            args=[session_id, resume_from_page],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'base_url': 'sephardicwarehouse.com',
+        'custom_domain': None
+    }
+    return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_torahjudaica(self, session_id, resume_from_page=1):
+    """Scraper for torahjudaica with queue management"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_feldart.apply_async(
+            args=[session_id, resume_from_page],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'base_url': 'torahjudaica.com',
+        'custom_domain': None
+    }
+    return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)

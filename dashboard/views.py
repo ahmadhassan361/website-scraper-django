@@ -22,6 +22,7 @@ from django.conf import settings
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import os
+from googleapiclient.http import MediaIoBaseUpload
 
 
 @login_required(login_url='login')
@@ -352,7 +353,7 @@ def _export_excel(products, filename):
         worksheet.write(row, 5, product.vendor or '')
         worksheet.write(row, 6, "Yes" if product.in_stock else "No")
         worksheet.write(row, 7, product.description or '')
-        worksheet.write(row, 8, product.image_link or '')
+        worksheet.write(row, 8, ", ".join(product.image_link.split(",")[:2]) or '')
         worksheet.write(row, 9, product.link or '')
         worksheet.write(row, 10, product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '')
         worksheet.write(row, 11, product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else '')
@@ -368,7 +369,67 @@ def _export_excel(products, filename):
     
     return response
 
-CHUNK_SIZE = 100  # Safe batch size
+# def _export_to_google_sheet(products, filename):
+#     SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')
+
+#     SCOPES = ['https://www.googleapis.com/auth/drive']
+#     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+#     # Step 1: Create Excel file in memory
+#     output = BytesIO()
+#     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+#     worksheet = workbook.add_worksheet('Products')
+
+#     headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Vendor', 'InStock', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At']
+#     for col, header in enumerate(headers):
+#         worksheet.write(0, col, header)
+
+#     for row, product in enumerate(products, start=1):
+#         worksheet.write(row, 0, product.website or '')
+#         worksheet.write(row, 1, product.name or '')
+#         worksheet.write(row, 2, product.sku or '')
+#         worksheet.write(row, 3, product.price or '')
+#         worksheet.write(row, 4, product.category or '')
+#         worksheet.write(row, 5, product.vendor or '')
+#         worksheet.write(row, 6, "Yes" if product.in_stock else "No")
+#         worksheet.write(row, 7, product.description or '')
+#         worksheet.write(row, 8, product.image_link or '')
+#         worksheet.write(row, 9, product.link or '')
+#         worksheet.write(row, 10, product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '')
+#         worksheet.write(row, 11, product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else '')
+
+#     workbook.close()
+#     output.seek(0)
+
+#     # Step 2: Upload to Google Drive and convert
+#     drive_service = build('drive', 'v3', credentials=creds)
+#     media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+#     file_metadata = {
+#         'name': filename,
+#         'mimeType': 'application/vnd.google-apps.spreadsheet'  # Convert to Google Sheet
+#     }
+
+#     uploaded_file = drive_service.files().create(
+#         body=file_metadata,
+#         media_body=media,
+#         fields='id'
+#     ).execute()
+
+#     file_id = uploaded_file.get('id')
+
+#     # Step 3: Make it public
+#     drive_service.permissions().create(
+#         fileId=file_id,
+#         body={'type': 'anyone', 'role': 'reader'}
+#     ).execute()
+
+#     link = f"https://docs.google.com/spreadsheets/d/{file_id}"
+#     from dashboard.models import GoogleSheetLinks
+#     GoogleSheetLinks.objects.create(link=link)
+#     return link
+
+CHUNK_SIZE = 2000  # Safe batch size
 
 def _export_to_google_sheet(products, filename):
     SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')
@@ -402,7 +463,7 @@ def _export_to_google_sheet(products, filename):
             product.vendor,
             "Yes" if product.in_stock else "No",
             product.description,
-            product.image_link,
+            ", ".join(product.image_link.split(",")[:2]),
             product.link,
             product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '',
             product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else ''
@@ -423,13 +484,13 @@ def _export_to_google_sheet(products, filename):
     drive_service = build('drive', 'v3', credentials=creds)
     drive_service.permissions().create(
         fileId=spreadsheet_id,
-        body={'type': 'anyone', 'role': 'editor'}
+        body={'type': 'anyone', 'role': 'reader'}
     ).execute()
 
     link = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
-    from dashboard.models import GoogleSheetLinks
     GoogleSheetLinks.objects.create(link=link)
     return link
+
 # def _export_to_google_sheet(products, filename):
 #     """Export products to a new Google Sheet and return the public link"""
 #     SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')

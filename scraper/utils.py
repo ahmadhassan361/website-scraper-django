@@ -1,7 +1,8 @@
 from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_malchutjudaica, scrape_feldart, scrape_menuchapublishers,
                     scrape_israelbookshoppublications, scrape_judaicapress,
-                    scrape_hausdecornj,scrape_majesticgiftware)
+                    scrape_hausdecornj,scrape_majesticgiftware, scrape_sephardicwarehouse,
+                    scrape_torahjudaica)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -18,7 +19,9 @@ SCRAPER_FUNCTIONS = {
     'israelbookshoppublications':scrape_israelbookshoppublications,
     'judaicapress':scrape_judaicapress,
     'hausdecornj':scrape_hausdecornj,
-    'majesticgiftware':scrape_majesticgiftware
+    'majesticgiftware':scrape_majesticgiftware,
+    'sephardicwarehouse':scrape_sephardicwarehouse,
+    'torahjudaica':scrape_torahjudaica
 }
 
 def get_scraper_function(function_name):
@@ -285,6 +288,18 @@ def initialize_websites():
             'url': 'https://www.majesticgiftware.com',
             'is_active': True,
             'scraper_function': 'majesticgiftware'
+        },
+        {
+            'name': 'sephardicwarehouse',
+            'url': 'https://www.sephardicwarehouse.com',
+            'is_active': True,
+            'scraper_function': 'sephardicwarehouse'
+        },
+        {
+            'name': 'torahjudaica',
+            'url': 'https://www.torahjudaica.com',
+            'is_active': True,
+            'scraper_function': 'torahjudaica'
         }
     ]
     

@@ -2,7 +2,7 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_malchutjudaica, scrape_feldart, scrape_menuchapublishers,
                     scrape_israelbookshoppublications, scrape_judaicapress,
                     scrape_hausdecornj,scrape_majesticgiftware, scrape_sephardicwarehouse,
-                    scrape_torahjudaica)
+                    scrape_torahjudaica, scrape_meiros, scrape_legacyjudaica, scrape_simchonim)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -21,7 +21,10 @@ SCRAPER_FUNCTIONS = {
     'hausdecornj':scrape_hausdecornj,
     'majesticgiftware':scrape_majesticgiftware,
     'sephardicwarehouse':scrape_sephardicwarehouse,
-    'torahjudaica':scrape_torahjudaica
+    'torahjudaica':scrape_torahjudaica,
+    'meiros':scrape_meiros,
+    'legacyjudaica':scrape_legacyjudaica,
+    'simchonim':scrape_simchonim
 }
 
 def get_scraper_function(function_name):
@@ -300,6 +303,24 @@ def initialize_websites():
             'url': 'https://www.torahjudaica.com',
             'is_active': True,
             'scraper_function': 'torahjudaica'
+        },
+        {
+            'name': 'meiros',
+            'url': 'https://meiros.com',
+            'is_active': True,
+            'scraper_function': 'meiros'
+        },
+        {
+            'name': 'legacyjudaica',
+            'url': 'https://legacyjudaica.com',
+            'is_active': True,
+            'scraper_function': 'legacyjudaica'
+        },
+        {
+            'name': 'simchonim',
+            'url': 'https://simchonim.com',
+            'is_active': True,
+            'scraper_function': 'simchonim'
         }
     ]
     

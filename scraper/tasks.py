@@ -1579,6 +1579,35 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         ).execute()
         
         file_id = uploaded_file.get('id')
+        # Build Sheets API client
+        sheets_service = build('sheets', 'v4', credentials=creds)
+
+        # Get actual sheet ID
+        sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
+        sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+        sheets_service.spreadsheets().batchUpdate(
+        spreadsheetId=file_id,
+        body={
+            "requests": [
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": 1,  # Skip header row
+                            "endIndex": total_products + 2
+                        },
+                        "properties": {
+                            "pixelSize": 25  # Set row height
+                        },
+                        "fields": "pixelSize"
+                    }
+                }
+            ]
+        }
+        ).execute()
+
+
         
         # Update progress to 95% (making public)
         export_record.progress_percentage = 95
@@ -1587,7 +1616,7 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         # Make it public
         drive_service.permissions().create(
             fileId=file_id,
-            body={'type': 'anyone', 'role': 'reader'}
+            body={'type': 'anyone', 'role': 'writer'}
         ).execute()
         
         # Generate public link

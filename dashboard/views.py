@@ -291,6 +291,7 @@ def export_products(request):
         products = Product.objects.all().order_by('website', 'created_at')
         filename = f"all_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
     else:
+        print(type(website_id))
         try:
             website = Website.objects.get(id=website_id)
             products = Product.objects.filter(website=website.name).order_by('created_at')

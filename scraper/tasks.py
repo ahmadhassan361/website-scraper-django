@@ -1450,6 +1450,8 @@ def scrape_simchonim(self, session_id, resume_from_index=0):
         'custom_domain': None
     }
     return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+import logging
+logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, soft_time_limit=3600, time_limit=3660)
 def export_products_to_google_sheet(self, export_id, website_filter='all'):
@@ -1483,7 +1485,8 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
             products = Product.objects.all().order_by('website', 'created_at')
             filename = f"all_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
         else:
-            products = Product.objects.filter(website=website_filter).order_by('created_at')
+            website = Website.objects.get(id=website_filter)
+            products = Product.objects.filter(website=website.name).order_by('created_at')
             filename = f"{website_filter}_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Update total products count
@@ -1562,7 +1565,7 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         # Update progress to 85% (uploading)
         export_record.progress_percentage = 85
         export_record.save()
-        
+        logger.info("Uploading to Google Drive...")
         # Upload to Google Drive and convert to Google Sheet
         drive_service = build('drive', 'v3', credentials=creds)
         media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -1579,12 +1582,20 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         ).execute()
         
         file_id = uploaded_file.get('id')
+        logger.info("File uploaded: %s", file_id)
+
+
         # Build Sheets API client
         sheets_service = build('sheets', 'v4', credentials=creds)
 
+        logger.info("Fetching sheet metadata...")
         # Get actual sheet ID
         sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
         sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+        logger.info("Sheet ID fetched: %s", sheet_id)
+
+        logger.info("Setting row height...")
+
         sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=file_id,
         body={

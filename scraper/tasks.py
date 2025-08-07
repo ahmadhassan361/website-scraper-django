@@ -7,7 +7,7 @@ import traceback
 from django.utils import timezone
 from celery.exceptions import SoftTimeLimitExceeded
 import json
-from .scraper_scripts.load_xml_data import load_meiros_sitemap_product_urls, load_legacyjudaica_sitemap_product_urls, load_simchonim_sitemap_product_urls
+from .scraper_scripts.load_xml_data import load_ritelite_product_urls,load_jewisheducationaltoys_sitemap_product_urls,load_meiros_sitemap_product_urls, load_legacyjudaica_sitemap_product_urls, load_simchonim_sitemap_product_urls
 from bs4 import BeautifulSoup
 import re
 
@@ -404,6 +404,426 @@ def scrape_shopify_website_common(session_id, website_config, task_instance, res
             pass
         
         return {'status': 'failed', 'message': str(e)}
+
+def extract_jewisheducationaltoys_product_info(soup, product_url, website_name):
+    """
+    Extract product information from meiros.com product page HTML using BeautifulSoup
+    
+    Args:
+        soup: BeautifulSoup object of the product page
+        product_url: URL of the product page
+        website_name: Name of the website
+        
+    Returns:
+        dict: Product information dictionary
+    """
+    try:
+        # Extract title
+        title_elem = soup.find('font', class_='productnamecolorLARGE colors_productname')
+        title = title_elem.get_text(strip=True) if title_elem else ''
+
+        b_tags = soup.find_all('b')
+        upc = ''
+
+        for b in b_tags:
+            if 'UPC:' in b.get_text():
+                # UPC value is likely in the next sibling text
+                next_sibling = b.next_sibling
+                if next_sibling:
+                    upc = str(next_sibling).strip()
+                break
+        sku = upc
+        
+        # Extract description
+        description = ''
+        desc_elem = soup.find('span', id='product_description')
+        if desc_elem:
+                description = desc_elem.get_text(strip=True)
+
+        availability = soup.find('meta', itemprop='availability')
+        in_stock = availability and 'InStock' in availability.get('content', '')
+
+        category = ''
+        b_tag = soup.find('td', class_='vCSS_breadcrumb_td').find('b')
+
+        # Find all <a> tags inside <b>
+        links = b_tag.find_all('a')
+
+        # Get the last breadcrumb text
+        category = links[-1].get_text(strip=True)
+
+        # Extract image link
+        image_link = ''
+        img_tag = soup.find('img', id='product_photo')
+        image_link = img_tag['src']
+
+        # Optional: Add protocol if missing
+        if image_link.startswith("//"):
+            image_link = "https:" + image_link
+        
+        # Generate unique product variant ID (using URL + SKU)
+        product_variant_id = f"{website_name}_{sku}" if sku else f"{website_name}_{hash(product_url)}"
+        
+        # Check if product is in stock (assume in stock if price exists)
+        # in_stock = bool(price)
+        
+        product_info = {
+            'product_variant_id': product_variant_id,
+            'name': title,
+            'sku': sku,
+            'price': 'Login Required',
+            'vendor': '',  # meiros.com doesn't seem to have vendor info
+            'category': category,  # We could extract this from URL or breadcrumbs if needed
+            'description': description,
+            'in_stock': in_stock,
+            'link': product_url,
+            'image_link': image_link,
+            'website': website_name
+        }
+        
+        return product_info
+        
+    except Exception as e:
+        print(f"Error extracting meiros product info: {e}")
+        return None
+
+def scrape_jewisheducationaltoys_products_common(session, resume_from_index=0):
+    """
+    Custom scraping function for jewisheducationaltoys.com using BeautifulSoup
+    
+    Args:
+        session: ScrapingSession object
+        resume_from_index: Index to resume from (for resumption)
+        
+    Returns:
+        dict: Scraping results
+    """
+    log_message(session, 'info', f'Starting custom HTML scraping for {session.website.name}')
+    
+    try:
+        # Get product URLs from sitemap
+        product_urls = load_jewisheducationaltoys_sitemap_product_urls()
+        
+        if not product_urls:
+            log_message(session, 'error', 'No product URLs found in sitemap')
+            return {
+                'status': 'failed',
+                'message': 'No product URLs found in sitemap'
+            }
+        
+        log_message(session, 'info', f'Found {len(product_urls)} product URLs from sitemap')
+        
+        # Update total products found
+        session.total_products_found = len(product_urls)
+        session.save()
+        
+        # Process products starting from resume index
+        for idx, product_url in enumerate(product_urls[resume_from_index:], start=resume_from_index):
+            try:
+                # Random delay between requests (5-15 seconds)
+                if idx > resume_from_index:  # Don't delay on first/resumed request
+                    delay = random.randint(5, 15)
+                    log_message(session, 'info', f'Waiting {delay} seconds before next request...')
+                    time.sleep(delay)
+                
+                log_message(session, 'info', f'Processing product {idx + 1}/{len(product_urls)}: {product_url}')
+                
+                # Make request to product page
+                response = requests.get(product_url, headers=HEADERS, timeout=30)
+                response.raise_for_status()
+                
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extract product information
+                product_info = extract_jewisheducationaltoys_product_info(soup, product_url, session.website.name)
+                
+                if not product_info:
+                    session.products_failed += 1
+                    log_message(session, 'warning', f'Failed to extract product info for: {product_url}')
+                    continue
+                
+                # Save or update product in database
+                try:
+                    # Try to get existing product by variant ID
+                    try:
+                        product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                        # Update existing product
+                        for key, value in product_info.items():
+                            if key not in ['website']:
+                                setattr(product, key, value)
+                        product.save()
+                        session.products_updated += 1
+                        log_message(session, 'success', f'Updated product: {product_info["name"]}', 
+                                product_url=product_url, product_sku=product_info['sku'])
+                    except Product.DoesNotExist:
+                        # Create new product
+                        try:
+                            product = Product.objects.create(**product_info)
+                            session.products_created += 1
+                            log_message(session, 'success', f'Created new product: {product_info["name"]}', 
+                                    product_url=product_url, product_sku=product_info['sku'])
+                        except Exception as create_error:
+                            # Handle race condition - try to get again
+                            try:
+                                product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                                # Update existing product
+                                for key, value in product_info.items():
+                                    if key not in ['website']:
+                                        setattr(product, key, value)
+                                product.save()
+                                session.products_updated += 1
+                                log_message(session, 'success', f'Updated product (race condition): {product_info["name"]}', 
+                                        product_url=product_url, product_sku=product_info['sku'])
+                            except:
+                                raise create_error
+                    
+                    session.products_scraped += 1
+                    
+                    # Update session progress
+                    session.last_processed_index = idx
+                    session.last_processed_url = product_url
+                    session.save()
+                    
+                except Exception as db_error:
+                    session.products_failed += 1
+                    log_message(session, 'error', f'Database error for product: {str(db_error)}', 
+                            product_url=product_url, product_sku=product_info['sku'], 
+                            exception_details=traceback.format_exc())
+                    continue
+                
+            except requests.exceptions.RequestException as req_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Request error for product {product_url}: {str(req_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+                
+            except Exception as product_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Error processing product {product_url}: {str(product_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+        
+        return {
+            'status': 'completed',
+            'total_found': session.total_products_found,
+            'scraped': session.products_scraped,
+            'created': session.products_created,
+            'updated': session.products_updated,
+            'failed': session.products_failed
+        }
+        
+    except Exception as e:
+        log_message(session, 'error', f'Critical error in meiros scraping: {str(e)}', 
+                  exception_details=traceback.format_exc())
+        return {
+            'status': 'failed',
+            'message': str(e)
+        }
+    
+def extract_ritelite_product_info(soup, product_url, website_name):
+    """
+    Extract product information from ritelite.com product page HTML using BeautifulSoup
+    
+    Args:
+        soup: BeautifulSoup object of the product page
+        product_url: URL of the product page
+        website_name: Name of the website
+        
+    Returns:
+        dict: Product information dictionary
+    """
+    try:
+        # Extract title
+        title_elem = soup.find("h3", class_="mainhead myriad-pro-normal")
+        title = title_elem.get_text(strip=True) if title_elem else ''
+        
+        # Extract price
+        price = ''
+        first_price_span = soup.find("span", class_="myriad-pro-bold")
+        if first_price_span:
+            price_text = first_price_span.get_text(strip=True).replace("MSRP", "").strip()
+            price = re.sub(r'[^\d\.]', '', price_text)
+            
+            
+        
+        # Extract SKU
+        sku_elem = soup.find("h4", class_="mainhead myriad-pro-bold uppercase text-center")
+        sku = sku_elem.get_text(strip=True) if sku_elem else ''
+        
+        # Extract description
+        description = ''
+        desc_elem = soup.find("div", class_="col-xs-12 col-lg-12 col-md-12 nopadding myriad margin-top-10")
+        if desc_elem:
+                description = desc_elem.get_text(strip=True)
+        
+        # Extract image link
+        image_link = ''
+        img_tag = soup.find("img", class_="zoom_02")
+        if img_tag:
+            base_url = "https://ritelite.com"
+            image_link = base_url + img_tag.get("src")
+
+        
+        # Generate unique product variant ID (using URL + SKU)
+        product_variant_id = f"{website_name}_{sku}" if sku else f"{website_name}_{hash(product_url)}"
+        category = product_url.split("Category/")[1].split("/")[0]
+        # Check if product is in stock (assume in stock if price exists)
+        in_stock = bool(price)
+        
+        product_info = {
+            'product_variant_id': product_variant_id,
+            'name': title,
+            'sku': sku,
+            'price': price,
+            'vendor': '',  # meiros.com doesn't seem to have vendor info
+            'category': category,  # We could extract this from URL or breadcrumbs if needed
+            'description': description,
+            'in_stock': in_stock,
+            'link': product_url,
+            'image_link': image_link,
+            'website': website_name
+        }
+        
+        return product_info
+        
+    except Exception as e:
+        print(f"Error extracting meiros product info: {e}")
+        return None
+
+def scrape_ritelite_products_common(session, resume_from_index=0):
+    """
+    Custom scraping function for ritelite.com using BeautifulSoup
+    
+    Args:
+        session: ScrapingSession object
+        resume_from_index: Index to resume from (for resumption)
+        
+    Returns:
+        dict: Scraping results
+    """
+    log_message(session, 'info', f'Starting custom HTML scraping for {session.website.name}')
+    
+    try:
+        # Get product URLs from sitemap
+        product_urls = load_ritelite_product_urls()
+        
+        if not product_urls:
+            log_message(session, 'error', 'No product URLs found in sitemap')
+            return {
+                'status': 'failed',
+                'message': 'No product URLs found in sitemap'
+            }
+        
+        log_message(session, 'info', f'Found {len(product_urls)} product URLs from sitemap')
+        
+        # Update total products found
+        session.total_products_found = len(product_urls)
+        session.save()
+        
+        # Process products starting from resume index
+        for idx, product_url in enumerate(product_urls[resume_from_index:], start=resume_from_index):
+            try:
+                # Random delay between requests (5-15 seconds)
+                if idx > resume_from_index:  # Don't delay on first/resumed request
+                    delay = random.randint(5, 15)
+                    log_message(session, 'info', f'Waiting {delay} seconds before next request...')
+                    time.sleep(delay)
+                
+                log_message(session, 'info', f'Processing product {idx + 1}/{len(product_urls)}: {product_url}')
+                
+                # Make request to product page
+                response = requests.get(product_url, headers=HEADERS, timeout=30)
+                response.raise_for_status()
+                
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extract product information
+                product_info = extract_ritelite_product_info(soup, product_url, session.website.name)
+                
+                if not product_info:
+                    session.products_failed += 1
+                    log_message(session, 'warning', f'Failed to extract product info for: {product_url}')
+                    continue
+                
+                # Save or update product in database
+                try:
+                    # Try to get existing product by variant ID
+                    try:
+                        product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                        # Update existing product
+                        for key, value in product_info.items():
+                            if key not in ['website']:
+                                setattr(product, key, value)
+                        product.save()
+                        session.products_updated += 1
+                        log_message(session, 'success', f'Updated product: {product_info["name"]}', 
+                                product_url=product_url, product_sku=product_info['sku'])
+                    except Product.DoesNotExist:
+                        # Create new product
+                        try:
+                            product = Product.objects.create(**product_info)
+                            session.products_created += 1
+                            log_message(session, 'success', f'Created new product: {product_info["name"]}', 
+                                    product_url=product_url, product_sku=product_info['sku'])
+                        except Exception as create_error:
+                            # Handle race condition - try to get again
+                            try:
+                                product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                                # Update existing product
+                                for key, value in product_info.items():
+                                    if key not in ['website']:
+                                        setattr(product, key, value)
+                                product.save()
+                                session.products_updated += 1
+                                log_message(session, 'success', f'Updated product (race condition): {product_info["name"]}', 
+                                        product_url=product_url, product_sku=product_info['sku'])
+                            except:
+                                raise create_error
+                    
+                    session.products_scraped += 1
+                    
+                    # Update session progress
+                    session.last_processed_index = idx
+                    session.last_processed_url = product_url
+                    session.save()
+                    
+                except Exception as db_error:
+                    session.products_failed += 1
+                    log_message(session, 'error', f'Database error for product: {str(db_error)}', 
+                            product_url=product_url, product_sku=product_info['sku'], 
+                            exception_details=traceback.format_exc())
+                    continue
+                
+            except requests.exceptions.RequestException as req_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Request error for product {product_url}: {str(req_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+                
+            except Exception as product_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Error processing product {product_url}: {str(product_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+        
+        return {
+            'status': 'completed',
+            'total_found': session.total_products_found,
+            'scraped': session.products_scraped,
+            'created': session.products_created,
+            'updated': session.products_updated,
+            'failed': session.products_failed
+        }
+        
+    except Exception as e:
+        log_message(session, 'error', f'Critical error in meiros scraping: {str(e)}', 
+                  exception_details=traceback.format_exc())
+        return {
+            'status': 'failed',
+            'message': str(e)
+        }
 
 def extract_meiros_product_info(soup, product_url, website_name):
     """
@@ -1075,6 +1495,10 @@ def scrape_custom_website_common(session_id, website_config, task_instance, resu
                 result = scrape_legacyjudaica_products_common(session, resume_from_index)
             elif website_config['scraper_type'] == 'simchonim':
                 result = scrape_simchonim_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'jewisheducationaltoys':
+                result = scrape_jewisheducationaltoys_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'ritelite':
+                result = scrape_ritelite_products_common(session, resume_from_index)
             else:
                 result = {'status': 'failed', 'message': f'Unknown scraper type: {website_config["scraper_type"]}'}
             
@@ -1257,6 +1681,26 @@ def scrape_feldart(self, session_id, resume_from_page=1):
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_colourscrafts(self, session_id, resume_from_page=1):
+    """Scraper for Feldart with queue management"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_colourscrafts.apply_async(
+            args=[session_id, resume_from_page],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'base_url': 'colourscrafts.com',
+        'custom_domain': None
+    }
+    return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
 
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_israelbookshoppublications(self, session_id, resume_from_page=1):
@@ -1406,6 +1850,49 @@ def scrape_meiros(self, session_id, resume_from_index=0):
         'custom_domain': None
     }
     return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_ritelite(self, session_id, resume_from_index=0):
+    """Custom scraper for ritelite.com with queue management and BeautifulSoup"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_ritelite.apply_async(
+            args=[session_id, resume_from_index],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'scraper_type': 'ritelite',
+        'base_url': 'ritelite.com',
+        'custom_domain': None
+    }
+    return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_jewisheducationaltoys(self, session_id, resume_from_index=0):
+    """Custom scraper for jewisheducationaltoys.com with queue management and BeautifulSoup"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_jewisheducationaltoys.apply_async(
+            args=[session_id, resume_from_index],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'scraper_type': 'jewisheducationaltoys',
+        'base_url': 'jewisheducationaltoys.com',
+        'custom_domain': None
+    }
+    return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
 
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_legacyjudaica(self, session_id, resume_from_index=0):
@@ -1487,7 +1974,7 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         else:
             website = Website.objects.get(id=website_filter)
             products = Product.objects.filter(website=website.name).order_by('created_at')
-            filename = f"{website_filter}_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+            filename = f"{website.name}_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Update total products count
         total_products = products.count()

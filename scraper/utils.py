@@ -2,7 +2,8 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_malchutjudaica, scrape_feldart, scrape_menuchapublishers,
                     scrape_israelbookshoppublications, scrape_judaicapress,
                     scrape_hausdecornj,scrape_majesticgiftware, scrape_sephardicwarehouse,
-                    scrape_torahjudaica, scrape_meiros, scrape_legacyjudaica, scrape_simchonim)
+                    scrape_torahjudaica, scrape_meiros, scrape_legacyjudaica, scrape_simchonim,
+                    scrape_colourscrafts, scrape_jewisheducationaltoys, scrape_ritelite)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -24,7 +25,10 @@ SCRAPER_FUNCTIONS = {
     'torahjudaica':scrape_torahjudaica,
     'meiros':scrape_meiros,
     'legacyjudaica':scrape_legacyjudaica,
-    'simchonim':scrape_simchonim
+    'simchonim':scrape_simchonim,
+    'colourscrafts':scrape_colourscrafts,
+    'jewisheducationaltoys': scrape_jewisheducationaltoys,
+    'ritelite': scrape_ritelite
 }
 
 def get_scraper_function(function_name):
@@ -321,7 +325,25 @@ def initialize_websites():
             'url': 'https://simchonim.com',
             'is_active': True,
             'scraper_function': 'simchonim'
-        }
+        },
+        {
+            'name': 'colourscrafts',
+            'url': 'https://colourscrafts.com',
+            'is_active': True,
+            'scraper_function': 'colourscrafts'
+        },
+        {
+            'name': 'jewisheducationaltoys',
+            'url': 'https://jewisheducationaltoys.com',
+            'is_active': True,
+            'scraper_function': 'jewisheducationaltoys'
+        },
+        {
+            'name': 'ritelite',
+            'url': 'https://ritelite.com',
+            'is_active': True,
+            'scraper_function': 'ritelite'
+        },
     ]
     
     for website_data in websites_data:

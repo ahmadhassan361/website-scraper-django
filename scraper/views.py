@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def google_oauth2_authorize(request):
     """Initiate Google OAuth2 authorization flow"""
     try:
-        redirect_uri = request.build_absolute_uri(reverse('google_oauth2_callback'))
+        redirect_uri = request.build_absolute_uri(reverse('scraper:google_oauth2_callback'))
         authorization_url, state = google_auth_manager.get_authorization_url(redirect_uri)
         
         # Store state in session for security
@@ -28,7 +28,7 @@ def google_oauth2_authorize(request):
     except Exception as e:
         logger.error(f"Error initiating OAuth2 flow: {e}")
         messages.error(request, f"Failed to initiate Google authorization: {str(e)}")
-        return redirect('dashboard:index')  # Adjust this redirect as needed
+        return redirect('home')  # Adjust this redirect as needed
 
 @login_required
 def google_oauth2_callback(request):
@@ -42,22 +42,22 @@ def google_oauth2_callback(request):
         if error:
             logger.error(f"OAuth2 authorization error: {error}")
             messages.error(request, f"Google authorization failed: {error}")
-            return redirect('dashboard:index')  # Adjust this redirect as needed
+            return redirect('home')  # Adjust this redirect as needed
         
         if not code or not state:
             logger.error("Missing authorization code or state in callback")
             messages.error(request, "Invalid authorization callback")
-            return redirect('dashboard:index')  # Adjust this redirect as needed
+            return redirect('home')  # Adjust this redirect as needed
         
         # Verify state parameter for security
         session_state = request.session.get('oauth2_state')
         if not session_state or session_state != state:
             logger.error("OAuth2 state mismatch - possible CSRF attack")
             messages.error(request, "Authorization failed - security check failed")
-            return redirect('dashboard:index')  # Adjust this redirect as needed
+            return redirect('home')  # Adjust this redirect as needed
         
         # Exchange code for tokens
-        redirect_uri = request.build_absolute_uri(reverse('google_oauth2_callback'))
+        redirect_uri = request.build_absolute_uri(reverse('scraper:google_oauth2_callback'))
         token_data = google_auth_manager.exchange_code_for_tokens(code, state, redirect_uri)
         
         # Save tokens
@@ -70,12 +70,12 @@ def google_oauth2_callback(request):
         messages.success(request, "Google Drive authorization successful! You can now export to Google Sheets.")
         logger.info(f"OAuth2 authorization completed successfully for user: {request.user.username}")
         
-        return redirect('dashboard:index')  # Adjust this redirect as needed
+        return redirect('home')  # Adjust this redirect as needed
         
     except Exception as e:
         logger.error(f"Error handling OAuth2 callback: {e}")
         messages.error(request, f"Authorization failed: {str(e)}")
-        return redirect('dashboard:index')  # Adjust this redirect as needed
+        return redirect('home')  # Adjust this redirect as needed
 
 @login_required
 def google_oauth2_status(request):
@@ -125,7 +125,7 @@ def google_oauth2_revoke(request):
             logger.error(f"Error revoking OAuth2 tokens: {e}")
             messages.error(request, f"Failed to revoke authorization: {str(e)}")
     
-    return redirect('dashboard:index')  # Adjust this redirect as needed
+    return redirect('home')  # Adjust this redirect as needed
 
 def google_oauth2_setup_instructions(request):
     """Display setup instructions for OAuth2"""

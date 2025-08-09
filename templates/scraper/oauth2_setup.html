@@ -1,0 +1,105 @@
+{% extends "components/base.html" %}
+
+{% block title %}Google OAuth2 Setup Instructions{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-cog"></i> Google OAuth2 Setup Instructions
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>Important:</strong> Follow these steps to enable Google Drive and Sheets integration with OAuth2 authentication.
+                    </div>
+
+                    <h5>Step 1: Create Google Cloud Project</h5>
+                    <ol>
+                        <li>Go to the <a href="https://console.cloud.google.com/" target="_blank" class="text-primary">Google Cloud Console</a></li>
+                        <li>Create a new project or select an existing one</li>
+                        <li>Make note of your Project ID</li>
+                    </ol>
+
+                    <h5>Step 2: Enable Required APIs</h5>
+                    <ol>
+                        <li>In the Google Cloud Console, navigate to <strong>APIs & Services</strong> > <strong>Library</strong></li>
+                        <li>Search for and enable the following APIs:
+                            <ul>
+                                <li><strong>Google Drive API</strong></li>
+                                <li><strong>Google Sheets API</strong></li>
+                            </ul>
+                        </li>
+                    </ol>
+
+                    <h5>Step 3: Create OAuth2 Credentials</h5>
+                    <ol>
+                        <li>Go to <strong>APIs & Services</strong> > <strong>Credentials</strong></li>
+                        <li>Click <strong>Create Credentials</strong> > <strong>OAuth 2.0 Client IDs</strong></li>
+                        <li>Choose <strong>Web application</strong> as the application type</li>
+                        <li>Set the <strong>Name</strong> (e.g., "Website Scraper OAuth2")</li>
+                        <li>Add <strong>Authorized redirect URIs</strong>:
+                            <ul>
+                                <li><code>{{ request.build_absolute_uri }}callback/</code></li>
+                                <li><code>http://localhost:8000/scraper/google/callback/</code> (for local development)</li>
+                            </ul>
+                        </li>
+                        <li>Click <strong>Create</strong></li>
+                    </ol>
+
+                    <h5>Step 4: Download Credentials</h5>
+                    <ol>
+                        <li>After creating the OAuth2 credentials, click the <strong>Download</strong> button</li>
+                        <li>Save the downloaded JSON file as <code>oauth2_credentials.json</code></li>
+                        <li>Place this file in the <code>credentials/</code> directory of your project</li>
+                    </ol>
+
+                    <h5>Step 5: Authorize the Application</h5>
+                    <ol>
+                        <li>Once the credentials file is in place, click the <strong>Authorize Google Drive</strong> button</li>
+                        <li>You'll be redirected to Google's authorization page</li>
+                        <li>Sign in with your personal Google account (the one with sufficient Drive storage)</li>
+                        <li>Grant the requested permissions</li>
+                        <li>You'll be redirected back to the application</li>
+                    </ol>
+
+                    <div class="alert alert-success">
+                        <h5>Benefits of OAuth2 Authentication:</h5>
+                        <ul class="mb-0">
+                            <li><strong>Higher Storage Quota:</strong> Uses your personal Google Drive storage (15GB+ free)</li>
+                            <li><strong>No Storage Limits:</strong> No service account storage restrictions</li>
+                            <li><strong>Direct Access:</strong> Files are created in your personal Google Drive</li>
+                            <li><strong>Better Security:</strong> Token-based authentication with automatic refresh</li>
+                            <li><strong>Easy Management:</strong> View and manage exported files directly in your Drive</li>
+                        </ul>
+                    </div>
+
+                    <div class="alert alert-warning">
+                        <h5>File Structure:</h5>
+                        <p>Make sure your project structure looks like this:</p>
+                        <pre>
+your-project/
+├── credentials/
+│   └── oauth2_credentials.json  # ← Place the downloaded file here
+├── manage.py
+└── ...
+                        </pre>
+                    </div>
+
+                    <div class="text-center mt-4">
+                        <a href="{% url 'home' %}" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to Dashboard
+                        </a>
+                        <a href="{% url 'scraper:google_oauth2_authorize' %}" class="btn btn-success">
+                            <i class="fab fa-google"></i> Authorize Google Drive
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

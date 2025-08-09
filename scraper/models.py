@@ -137,3 +137,28 @@ class ScrapingState(models.Model):
     
     def __str__(self):
         return f"{self.website.name} - {'Running' if self.is_running else 'Idle'}"
+
+class GoogleOAuth2Token(models.Model):
+    """Model to store Google OAuth2 tokens for accessing Google Drive/Sheets"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    access_token = models.TextField()
+    refresh_token = models.TextField()
+    token_uri = models.URLField(default='https://oauth2.googleapis.com/token')
+    client_id = models.TextField()
+    client_secret = models.TextField()
+    scopes = models.JSONField(default=list)  # Store scopes as JSON array
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['-updated_at']
+    
+    def __str__(self):
+        return f"OAuth2 Token - {self.user.username if self.user else 'System'} - {'Active' if self.is_active else 'Inactive'}"
+    
+    @property
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() > self.expires_at

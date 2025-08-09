@@ -1943,20 +1943,17 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, soft_time_limit=3600, time_limit=3660)
 def export_products_to_google_sheet(self, export_id, website_filter='all'):
     """
-    Export products to Google Sheet in background with progress tracking
+    Export products to Google Sheet in background with progress tracking using OAuth2
     
     Args:
         export_id: ID of the GoogleSheetLinks record
         website_filter: 'all' or specific website name
     """
-    import os
     import xlsxwriter
     from io import BytesIO
-    from django.conf import settings
     from django.utils import timezone
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
+    from .google_auth import google_auth_manager
     
     try:
         # Get the export record
@@ -1966,6 +1963,14 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         export_record.status = 'processing'
         export_record.celery_task_id = self.request.id
         export_record.save()
+        
+        # Check if OAuth2 credentials are available
+        credentials = google_auth_manager.get_active_credentials()
+        if not credentials:
+            export_record.status = 'failed'
+            export_record.error_message = 'No valid Google OAuth2 credentials found. Please authorize the application first.'
+            export_record.save()
+            return {'status': 'failed', 'message': 'Google authorization required. Please authorize the application first.'}
         
         # Get products based on filter
         if website_filter == 'all':
@@ -2037,29 +2042,19 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         export_record.progress_percentage = 80
         export_record.save()
         
-        # Upload to Google Drive
-        SERVICE_ACCOUNT_FILE = os.path.join(settings.BASE_DIR, 'credentials', 'web-scraper-463601-05f99a6d168b.json')
-        
-        if not os.path.exists(SERVICE_ACCOUNT_FILE):
-            export_record.status = 'failed'
-            export_record.error_message = 'Google Service Account credentials not found'
-            export_record.save()
-            return {'status': 'failed', 'message': 'Google Service Account credentials not found'}
-        
-        SCOPES = ['https://www.googleapis.com/auth/drive']
-        creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        
         # Update progress to 85% (uploading)
         export_record.progress_percentage = 85
         export_record.save()
-        logger.info("Uploading to Google Drive...")
-        # Upload to Google Drive and convert to Google Sheet
-        drive_service = build('drive', 'v3', credentials=creds)
+        logger.info("Uploading to Google Drive using OAuth2...")
+        
+        # Build Drive and Sheets services using OAuth2
+        drive_service = google_auth_manager.build_drive_service()
         media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         
+        # Upload to personal Google Drive (no folder restrictions)
         file_metadata = {
             'name': filename,
-            'mimeType': 'application/vnd.google-apps.spreadsheet'  # Convert to Google Sheet
+            'mimeType': 'application/vnd.google-apps.spreadsheet',  # Convert to Google Sheet
         }
         
         uploaded_file = drive_service.files().create(
@@ -2069,11 +2064,10 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         ).execute()
         
         file_id = uploaded_file.get('id')
-        logger.info("File uploaded: %s", file_id)
-
+        logger.info("File uploaded to personal Google Drive: %s", file_id)
 
         # Build Sheets API client
-        sheets_service = build('sheets', 'v4', credentials=creds)
+        sheets_service = google_auth_manager.build_sheets_service()
 
         logger.info("Fetching sheet metadata...")
         # Get actual sheet ID
@@ -2082,39 +2076,36 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         logger.info("Sheet ID fetched: %s", sheet_id)
 
         logger.info("Setting row height...")
-
         sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=file_id,
-        body={
-            "requests": [
-                {
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "ROWS",
-                            "startIndex": 1,  # Skip header row
-                            "endIndex": total_products + 2
-                        },
-                        "properties": {
-                            "pixelSize": 25  # Set row height
-                        },
-                        "fields": "pixelSize"
+            spreadsheetId=file_id,
+            body={
+                "requests": [
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": 1,  # Skip header row
+                                "endIndex": total_products + 2
+                            },
+                            "properties": {
+                                "pixelSize": 25  # Set row height
+                            },
+                            "fields": "pixelSize"
+                        }
                     }
-                }
-            ]
-        }
+                ]
+            }
         ).execute()
 
-
-        
         # Update progress to 95% (making public)
         export_record.progress_percentage = 95
         export_record.save()
         
-        # Make it public
+        # Make it public (optional - you can remove this if you want files to remain private)
         drive_service.permissions().create(
             fileId=file_id,
-            body={'type': 'anyone', 'role': 'writer'}
+            body={'type': 'anyone', 'role': 'reader'}  # Changed to 'reader' for better security
         ).execute()
         
         # Generate public link
@@ -2127,11 +2118,13 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         export_record.completed_at = timezone.now()
         export_record.save()
         
+        logger.info(f"Export completed successfully. File uploaded to personal Google Drive: {link}")
+        
         return {
             'status': 'completed',
             'link': link,
             'total_products': total_products,
-            'message': f'Successfully exported {total_products} products to Google Sheet'
+            'message': f'Successfully exported {total_products} products to Google Sheet in your personal Drive'
         }
         
     except Exception as e:
@@ -2140,6 +2133,7 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
             export_record.status = 'failed'
             export_record.error_message = str(e)
             export_record.save()
+            logger.error(f"Export failed: {e}")
         except:
             pass
         

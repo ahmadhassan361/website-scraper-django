@@ -48,6 +48,9 @@ urlpatterns = [
     path('export-status/<int:export_id>/', export_status, name='export_status'),
     path('cancel-export/<int:export_id>/', cancel_export, name='cancel_export'),
     
+    # Scraper App URLs (OAuth2 and other scraper-specific functionality)
+    path('scraper/', include('scraper.urls')),
+    
     # Status and Monitoring
     path('website-status/<int:website_id>/', website_status, name='website_status'),
     path('session-details/<int:session_id>/', session_details, name='session_details'),

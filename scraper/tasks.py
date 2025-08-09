@@ -2105,7 +2105,7 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         # Make it public (optional - you can remove this if you want files to remain private)
         drive_service.permissions().create(
             fileId=file_id,
-            body={'type': 'anyone', 'role': 'reader'}  # Changed to 'reader' for better security
+            body={'type': 'anyone', 'role': 'writer'}  # Changed to 'reader' for better security
         ).execute()
         
         # Generate public link

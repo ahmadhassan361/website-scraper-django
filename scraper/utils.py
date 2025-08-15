@@ -3,7 +3,8 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_israelbookshoppublications, scrape_judaicapress,
                     scrape_hausdecornj,scrape_majesticgiftware, scrape_sephardicwarehouse,
                     scrape_torahjudaica, scrape_meiros, scrape_legacyjudaica, scrape_simchonim,
-                    scrape_colourscrafts, scrape_jewisheducationaltoys, scrape_ritelite)
+                    scrape_colourscrafts, scrape_jewisheducationaltoys, scrape_ritelite,
+                    scrape_shaijudaica)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -28,7 +29,8 @@ SCRAPER_FUNCTIONS = {
     'simchonim':scrape_simchonim,
     'colourscrafts':scrape_colourscrafts,
     'jewisheducationaltoys': scrape_jewisheducationaltoys,
-    'ritelite': scrape_ritelite
+    'ritelite': scrape_ritelite,
+    'shaijudaica': scrape_shaijudaica,
 }
 
 def get_scraper_function(function_name):
@@ -343,6 +345,12 @@ def initialize_websites():
             'url': 'https://ritelite.com',
             'is_active': True,
             'scraper_function': 'ritelite'
+        },
+        {
+            'name': 'shaijudaica',
+            'url': 'https://www.shaijudaica.co.il',
+            'is_active': True,
+            'scraper_function': 'shaijudaica'
         },
     ]
     

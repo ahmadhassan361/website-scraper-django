@@ -2,6 +2,36 @@ import requests
 import time
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
+import requests
+import xml.etree.ElementTree as ET
+
+def load_shaijudaica_product_urls():
+    namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+    items_links = []
+
+    # Step 1: Fetch main sitemap
+    response = requests.get("https://www.shaijudaica.co.il/sitemap.xml")
+    response.raise_for_status()
+    root = ET.fromstring(response.content)
+
+    # Step 2: Extract sub-sitemap URLs
+    sitemap_links = [loc.text for loc in root.findall('.//ns:loc', namespace)]
+
+    # Step 3: Fetch each sub-sitemap and extract item links
+    for sitemap_url in sitemap_links:
+        sub_resp = requests.get(sitemap_url)
+        sub_resp.raise_for_status()
+        sub_root = ET.fromstring(sub_resp.content)
+        
+        for loc in sub_root.findall('.//ns:loc', namespace):
+            url = loc.text.strip()
+            if url.startswith("https://www.shaijudaica.co.il/items"):
+                items_links.append(url)
+
+    return items_links
+
+
+
 
 def load_ritelite_product_urls():
     base_url = "https://ritelite.com"

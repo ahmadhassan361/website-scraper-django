@@ -4,7 +4,7 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_hausdecornj,scrape_majesticgiftware, scrape_sephardicwarehouse,
                     scrape_torahjudaica, scrape_meiros, scrape_legacyjudaica, scrape_simchonim,
                     scrape_colourscrafts, scrape_jewisheducationaltoys, scrape_ritelite,
-                    scrape_shaijudaica, scrape_gramcoschoolsupplies, scrape_ozvehadar)
+                    scrape_shaijudaica, scrape_gramcoschoolsupplies, scrape_ozvehadar, scrape_craftsandmore)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -33,6 +33,7 @@ SCRAPER_FUNCTIONS = {
     'shaijudaica': scrape_shaijudaica,
     'gramcoschoolsupplies': scrape_gramcoschoolsupplies,
     'ozvehadar': scrape_ozvehadar,
+    'craftsandmore': scrape_craftsandmore,
 }
 
 def get_scraper_function(function_name):
@@ -365,6 +366,12 @@ def initialize_websites():
             'url': 'https://ozvehadar.us',
             'is_active': True,
             'scraper_function': 'ozvehadar'
+        },
+        {
+            'name': 'craftsandmore',
+            'url': 'https://craftsandmore.com',
+            'is_active': True,
+            'scraper_function': 'craftsandmore'
         },
     ]
     

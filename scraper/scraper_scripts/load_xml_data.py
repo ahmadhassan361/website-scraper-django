@@ -4,6 +4,12 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import random
 
+def load_craftsandmore_product_urls():
+    """
+    Load links from a text file into a Python list.
+    """
+    with open("./craftsandmore.txt", "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
 
 def load_ozvehadar_product_urls():
     product_links = []

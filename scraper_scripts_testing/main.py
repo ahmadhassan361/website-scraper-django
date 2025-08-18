@@ -84,94 +84,116 @@ from bs4 import BeautifulSoup
 #                 next_page = None
 
 #     return product_links
-def extract_ozvehadar_product_info():
-        """
-        Extract product information from ozvehadar.us product page HTML using BeautifulSoup
+# def extract_ozvehadar_product_info():
+#         """
+#         Extract product information from ozvehadar.us product page HTML using BeautifulSoup
         
-        Args:
-            soup: BeautifulSoup object of the product page
-            product_url: URL of the product page
-            website_name: Name of the website
+#         Args:
+#             soup: BeautifulSoup object of the product page
+#             product_url: URL of the product page
+#             website_name: Name of the website
             
-        Returns:
-            dict: Product information dictionary
-        """
-    # try:
-        response = requests.get("https://ozvehadar.us/talmud-bavli-mesivta-shinun-blue/")
-        soup = BeautifulSoup(response.content, "html.parser")
-        title_tag = soup.find('h1', class_='productView-title')
-        title = title_tag.get_text(strip=True) if title_tag else None
+#         Returns:
+#             dict: Product information dictionary
+#         """
+#     # try:
+#         response = requests.get("https://ozvehadar.us/talmud-bavli-mesivta-shinun-blue/")
+#         soup = BeautifulSoup(response.content, "html.parser")
+#         title_tag = soup.find('h1', class_='productView-title')
+#         title = title_tag.get_text(strip=True) if title_tag else None
 
-        # Description
-        desc_div = soup.find(id="tab-description")
-        description = desc_div.get_text(separator=' ', strip=True) if desc_div else None
+#         # Description
+#         desc_div = soup.find(id="tab-description")
+#         description = desc_div.get_text(separator=' ', strip=True) if desc_div else None
 
-        # Price
-        price_span = soup.find("span", class_="price price--withoutTax")
-        price = price_span.get_text(strip=True) if price_span else None
+#         # Price
+#         price_span = soup.find("span", class_="price price--withoutTax")
+#         price = price_span.get_text(strip=True) if price_span else None
 
-        # SKU
-        sku_span = soup.find("dd", {"data-product-sku": True})
-        sku = sku_span.get_text(strip=True) if sku_span else None
+#         # SKU
+#         sku_span = soup.find("dd", {"data-product-sku": True})
+#         sku = sku_span.get_text(strip=True) if sku_span else None
 
-        # Image URL
-        # From <img src="">
-        image_links = set()
-        image_urls  = []
-        for a in soup.find_all("a", href=True):
-            if a["href"].endswith((".png", ".jpg", ".jpeg", ".webp")):
-                image_links.add(a["href"])
+#         # Image URL
+#         # From <img src="">
+#         image_links = set()
+#         image_urls  = []
+#         for a in soup.find_all("a", href=True):
+#             if a["href"].endswith((".png", ".jpg", ".jpeg", ".webp")):
+#                 image_links.add(a["href"])
 
-        # From <img src="">
-        for img in soup.find_all("img", src=True):
-            if img["src"].endswith((".png", ".jpg", ".jpeg", ".webp")):
-                image_links.add(img["src"])
+#         # From <img src="">
+#         for img in soup.find_all("img", src=True):
+#             if img["src"].endswith((".png", ".jpg", ".jpeg", ".webp")):
+#                 image_links.add(img["src"])
 
-        # From <img data-lazy="">
-        for img in soup.find_all("img", {"data-lazy": True}):
-            if img["data-lazy"].endswith((".png", ".jpg", ".jpeg", ".webp")):
-                image_links.add(img["data-lazy"])
-        image_urls = list(image_links)
+#         # From <img data-lazy="">
+#         for img in soup.find_all("img", {"data-lazy": True}):
+#             if img["data-lazy"].endswith((".png", ".jpg", ".jpeg", ".webp")):
+#                 image_links.add(img["data-lazy"])
+#         image_urls = list(image_links)
 
         
-        category = ''
-        lis = soup.select("ol.breadcrumbs li")
+#         category = ''
+#         lis = soup.select("ol.breadcrumbs li")
 
-        # Get second last li
-        second_last = lis[-2] if len(lis) > 2 else None
+#         # Get second last li
+#         second_last = lis[-2] if len(lis) > 2 else None
 
-        # Extract the text (strip spaces)
-        category = ''
-        if second_last:
-            category = second_last.get_text(strip=True)
+#         # Extract the text (strip spaces)
+#         category = ''
+#         if second_last:
+#             category = second_last.get_text(strip=True)
         
         
-        # Generate unique product variant ID (using URL + SKU)
-        # product_variant_id = f"{website_name}_{hash(product_url)}"
+#         # Generate unique product variant ID (using URL + SKU)
+#         # product_variant_id = f"{website_name}_{hash(product_url)}"
         
-        # Check if product is in stock (assume in stock if price exists)
-        in_stock = bool(price)
+#         # Check if product is in stock (assume in stock if price exists)
+#         in_stock = bool(price)
         
-        product_info = {
-            # 'product_variant_id': product_variant_id,
-            'name': title,
-            'sku': sku,
-            'price': price,
-            'vendor': '',
-            'category': category,  # Use vendor as category since there's no separate category
-            'description': description,
-            'in_stock': in_stock,
-            # 'link': product_url,
-            'image_link': ",".join(image_urls[:2]),
-            # 'website': website_name
-        }
+#         product_info = {
+#             # 'product_variant_id': product_variant_id,
+#             'name': title,
+#             'sku': sku,
+#             'price': price,
+#             'vendor': '',
+#             'category': category,  # Use vendor as category since there's no separate category
+#             'description': description,
+#             'in_stock': in_stock,
+#             # 'link': product_url,
+#             'image_link': ",".join(image_urls[:2]),
+#             # 'website': website_name
+#         }
         
-        return product_info
+#         return product_info
         
-    # except Exception as e:
-    #     print(f"Error extracting legacyjudaica product info: {e}")
-    #     return None
+#     # except Exception as e:
+#     #     print(f"Error extracting legacyjudaica product info: {e}")
+#     #     return None
+import xml.etree.ElementTree as ET
 
+def get_all_product_links():
+    """
+    Fetch all product links from a WordPress sitemap index in one go.
+    """
+    def fetch_xml(url):
+        resp = requests.get(url)
+        resp.raise_for_status()
+        return ET.fromstring(resp.content)
+
+    all_links = []
+    root = fetch_xml("https://craftsandmore.com/wp-sitemap.xml")
+    ns = {'ns': root.tag.split('}')[0].strip('{')}
+
+    # find all product sitemap urls
+    for sitemap in root.findall('.//ns:loc', ns):
+        if 'product' in sitemap.text.lower():
+            product_sitemap = fetch_xml(sitemap.text)
+            for loc in product_sitemap.findall('.//ns:loc', ns):
+                all_links.append(loc.text)
+
+    return all_links
 if __name__ == "__main__":
-    print(extract_ozvehadar_product_info())
+    print(get_all_product_links())
 #     print(load_shaijudaica_product_urls())

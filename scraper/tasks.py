@@ -2135,7 +2135,7 @@ def scrape_craftsandmore_products_common(session, resume_from_index=0):
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
                 # Extract product information
-                product_info = extract_ozvehadar_product_info(soup, product_url, session.website.name)
+                product_info = extract_craftsandmore_product_info(soup, product_url, session.website.name)
                 
                 if not product_info:
                     session.products_failed += 1

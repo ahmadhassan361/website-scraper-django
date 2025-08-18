@@ -2039,6 +2039,8 @@ def extract_craftsandmore_product_info(soup, product_url, website_name):
         sku_span = soup.find("span", class_="sku_wrapper")
         sku = sku_span.get_text(strip=True) if sku_span else None
 
+        
+
         # Image URL
         fig = soup.select_one('figure.woocommerce-product-gallery__image')
         image_link = ''

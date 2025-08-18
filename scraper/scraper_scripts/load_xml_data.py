@@ -3,12 +3,16 @@ import time
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import random
+import os
 
 def load_craftsandmore_product_urls():
     """
-    Load links from a text file into a Python list.
+    Load links from the craftsandmore.txt file into a Python list.
     """
-    with open("./craftsandmore.txt", "r", encoding="utf-8") as f:
+    base_dir = os.path.dirname(__file__)  # directory of load_xml_data.py
+    file_path = os.path.join(base_dir, "craftsandmore.txt")
+
+    with open(file_path, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
 def load_ozvehadar_product_urls():

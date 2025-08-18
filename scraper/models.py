@@ -43,13 +43,13 @@ class GoogleSheetLinks(models.Model):
         return f"Export {self.id} - {self.status} - {self.created_at}"
 
 class Product(models.Model):
-    product_variant_id = models.CharField(max_length=300,null=True,blank=True,unique=True)     # website
+    product_variant_id = models.CharField(max_length=500,null=True,blank=True,unique=True)     # website
     website = models.CharField(max_length=300,null=True,blank=True)     # website
-    name = models.CharField(max_length=300,null=True,blank=True)        # Item name
+    name = models.CharField(max_length=500,null=True,blank=True)        # Item name
     sku = models.CharField(max_length=250, null=True, blank=True)       # Item number
     price = models.CharField(max_length=50, null=True, blank=True)      # price
-    vendor = models.CharField(max_length=50, null=True, blank=True)     # vendor
-    category = models.CharField(max_length=50, null=True, blank=True)   # category
+    vendor = models.CharField(max_length=400, null=True, blank=True)     # vendor
+    category = models.CharField(max_length=400, null=True, blank=True)   # category
     description = models.TextField(null=True, blank=True)               # Description
     in_stock = models.BooleanField(default=False)                       # In Stock
     link = models.TextField(null=True, blank=True)                      # link

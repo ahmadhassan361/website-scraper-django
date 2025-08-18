@@ -7,7 +7,7 @@ import traceback
 from django.utils import timezone
 from celery.exceptions import SoftTimeLimitExceeded
 import json
-from .scraper_scripts.load_xml_data import load_shaijudaica_product_urls,load_ritelite_product_urls,load_jewisheducationaltoys_sitemap_product_urls,load_meiros_sitemap_product_urls, load_legacyjudaica_sitemap_product_urls, load_simchonim_sitemap_product_urls
+from .scraper_scripts.load_xml_data import load_ozvehadar_product_urls,load_shaijudaica_product_urls,load_ritelite_product_urls,load_jewisheducationaltoys_sitemap_product_urls,load_meiros_sitemap_product_urls, load_legacyjudaica_sitemap_product_urls, load_simchonim_sitemap_product_urls
 from bs4 import BeautifulSoup
 import re
 
@@ -405,6 +405,130 @@ def scrape_shopify_website_common(session_id, website_config, task_instance, res
         
         return {'status': 'failed', 'message': str(e)}
 
+def scrape_custom_website_common(session_id, website_config, task_instance, resume_from_index=0):
+    """
+    Common custom scraper function for non-Shopify websites
+    
+    Args:
+        session_id: ID of the scraping session
+        website_config: Dictionary containing website-specific configuration
+        task_instance: The calling task instance (self)
+        resume_from_index: Index to resume from (for resumption)
+    """
+    try:
+        # Get the scraping session
+        session = ScrapingSession.objects.get(id=session_id)
+        website = session.website
+        
+        # Update session status and celery task id
+        session.status = 'running'
+        session.celery_task_id = task_instance.request.id
+        session.save()
+        
+        # Update website state
+        state, created = ScrapingState.objects.get_or_create(website=website)
+        state.is_running = True
+        state.current_session = session
+        state.last_run = timezone.now()
+        state.save()
+        
+        log_message(session, 'info', f'Starting custom HTML scraping session for {website.name}')
+        
+        try:
+            # Use the appropriate scraping function based on website
+            if website_config['scraper_type'] == 'meiros':
+                result = scrape_meiros_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'legacyjudaica':
+                result = scrape_legacyjudaica_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'simchonim':
+                result = scrape_simchonim_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'jewisheducationaltoys':
+                result = scrape_jewisheducationaltoys_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'ritelite':
+                result = scrape_ritelite_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'shaijudaica':
+                result = scrape_shaijudaica_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'ozvehadar':
+                result = scrape_ozvehadar_products_common(session, resume_from_index)
+            else:
+                result = {'status': 'failed', 'message': f'Unknown scraper type: {website_config["scraper_type"]}'}
+            
+            # Mark session as completed
+            session.status = 'completed'
+            session.completed_at = timezone.now()
+            session.save()
+            
+            # Update website state
+            state.is_running = False
+            state.save()
+            
+            log_message(session, 'info', 
+                       f'Scraping completed! Total: {session.total_products_found}, '
+                       f'Scraped: {session.products_scraped}, '
+                       f'Created: {session.products_created}, '
+                       f'Updated: {session.products_updated}, '
+                       f'Failed: {session.products_failed}')
+            
+            return result
+            
+        except SoftTimeLimitExceeded:
+            # Handle soft time limit with auto-resume
+            log_message(session, 'warning', f'Task soft time limit exceeded. Auto-resuming in 30 seconds...')
+            
+            # Update session for resumption
+            session.status = 'paused'
+            session.save()
+            
+            # Schedule auto-resume task with a 30-second delay
+            # Use the last processed index for resumption
+            if website_config['scraper_type'] == 'meiros':
+                scrape_meiros.apply_async(
+                    args=[session_id, session.last_processed_index + 1],
+                    countdown=30
+                )
+            elif website_config['scraper_type'] == 'legacyjudaica':
+                scrape_legacyjudaica.apply_async(
+                    args=[session_id, session.last_processed_index + 1],
+                    countdown=30
+                )
+            
+            log_message(session, 'info', f'Auto-resume task scheduled')
+            
+            return {
+                'status': 'auto_resuming', 
+                'message': f'Task auto-resuming in 30 seconds from index {session.last_processed_index + 1}',
+            }
+        
+    except Exception as e:
+        # Handle any unexpected errors
+        try:
+            session.status = 'failed'
+            session.completed_at = timezone.now()
+            session.save()
+            
+            state.is_running = False
+            state.save()
+            
+            log_message(session, 'error', f'Task failed with unexpected error: {str(e)}', 
+                       exception_details=traceback.format_exc())
+        except:
+            # If we can't even log the error, just pass
+            pass
+        
+        return {'status': 'failed', 'message': str(e)}
+
+# Website-specific scraper functions
+# Queue management for limiting concurrent scrapers to maximum 2
+def check_concurrent_scrapers():
+    """Check how many scrapers are currently running"""
+    running_count = ScrapingState.objects.filter(is_running=True).count()
+    return running_count
+
+def can_start_scraper():
+    """Check if we can start a new scraper (max 2 concurrent)"""
+    return check_concurrent_scrapers() < 2
+
+# Custom websites
 def extract_jewisheducationaltoys_product_info(soup, product_url, website_name):
     """
     Extract product information from meiros.com product page HTML using BeautifulSoup
@@ -1663,127 +1787,229 @@ def scrape_simchonim_products_common(session, resume_from_index=0):
             'message': str(e)
         }
 
-def scrape_custom_website_common(session_id, website_config, task_instance, resume_from_index=0):
+def extract_ozvehadar_product_info(soup, product_url, website_name):
     """
-    Common custom scraper function for non-Shopify websites
+    Extract product information from ozvehadar.us product page HTML using BeautifulSoup
     
     Args:
-        session_id: ID of the scraping session
-        website_config: Dictionary containing website-specific configuration
-        task_instance: The calling task instance (self)
-        resume_from_index: Index to resume from (for resumption)
+        soup: BeautifulSoup object of the product page
+        product_url: URL of the product page
+        website_name: Name of the website
+        
+    Returns:
+        dict: Product information dictionary
     """
     try:
-        # Get the scraping session
-        session = ScrapingSession.objects.get(id=session_id)
-        website = session.website
+        title_tag = soup.find('h1', class_='productView-title')
+        title = title_tag.get_text(strip=True) if title_tag else None
+
+        # Description
+        decription = ''
+        desc_div = soup.find(id="tab-description")
+        description = desc_div.get_text(separator=' ', strip=True) if desc_div else None
+
+        # Price
+        price_span = soup.find("span", class_="price price--withoutTax")
+        price = price_span.get_text(strip=True) if price_span else None
+
+        # SKU
+        sku_span = soup.find("dd", {"data-product-sku": True})
+        sku = sku_span.get_text(strip=True) if sku_span else None
+
+        # Image URL
+        # From <img src="">
+        image_links = set()
+        image_urls  = []
+        for a in soup.find_all("a", href=True):
+            if a["href"].endswith((".png", ".jpg", ".jpeg", ".webp")):
+                image_links.add(a["href"])
+
+        # From <img src="">
+        for img in soup.find_all("img", src=True):
+            if img["src"].endswith((".png", ".jpg", ".jpeg", ".webp")):
+                image_links.add(img["src"])
+
+        # From <img data-lazy="">
+        for img in soup.find_all("img", {"data-lazy": True}):
+            if img["data-lazy"].endswith((".png", ".jpg", ".jpeg", ".webp")):
+                image_links.add(img["data-lazy"])
+        image_urls = list(image_links)
+
         
-        # Update session status and celery task id
-        session.status = 'running'
-        session.celery_task_id = task_instance.request.id
-        session.save()
+        category = ''
+        lis = soup.select("ol.breadcrumbs li")
+
+        # Get second last li
+        second_last = lis[-2] if len(lis) > 2 else None
+
+        # Extract the text (strip spaces)
+        category = ''
+        if second_last:
+            category = second_last.get_text(strip=True)
         
-        # Update website state
-        state, created = ScrapingState.objects.get_or_create(website=website)
-        state.is_running = True
-        state.current_session = session
-        state.last_run = timezone.now()
-        state.save()
         
-        log_message(session, 'info', f'Starting custom HTML scraping session for {website.name}')
+        # Generate unique product variant ID (using URL + SKU)
+        product_variant_id = f"{website_name}_{hash(product_url)}"
         
-        try:
-            # Use the appropriate scraping function based on website
-            if website_config['scraper_type'] == 'meiros':
-                result = scrape_meiros_products_common(session, resume_from_index)
-            elif website_config['scraper_type'] == 'legacyjudaica':
-                result = scrape_legacyjudaica_products_common(session, resume_from_index)
-            elif website_config['scraper_type'] == 'simchonim':
-                result = scrape_simchonim_products_common(session, resume_from_index)
-            elif website_config['scraper_type'] == 'jewisheducationaltoys':
-                result = scrape_jewisheducationaltoys_products_common(session, resume_from_index)
-            elif website_config['scraper_type'] == 'ritelite':
-                result = scrape_ritelite_products_common(session, resume_from_index)
-            elif website_config['scraper_type'] == 'shaijudaica':
-                result = scrape_shaijudaica_products_common(session, resume_from_index)
-            else:
-                result = {'status': 'failed', 'message': f'Unknown scraper type: {website_config["scraper_type"]}'}
-            
-            # Mark session as completed
-            session.status = 'completed'
-            session.completed_at = timezone.now()
-            session.save()
-            
-            # Update website state
-            state.is_running = False
-            state.save()
-            
-            log_message(session, 'info', 
-                       f'Scraping completed! Total: {session.total_products_found}, '
-                       f'Scraped: {session.products_scraped}, '
-                       f'Created: {session.products_created}, '
-                       f'Updated: {session.products_updated}, '
-                       f'Failed: {session.products_failed}')
-            
-            return result
-            
-        except SoftTimeLimitExceeded:
-            # Handle soft time limit with auto-resume
-            log_message(session, 'warning', f'Task soft time limit exceeded. Auto-resuming in 30 seconds...')
-            
-            # Update session for resumption
-            session.status = 'paused'
-            session.save()
-            
-            # Schedule auto-resume task with a 30-second delay
-            # Use the last processed index for resumption
-            if website_config['scraper_type'] == 'meiros':
-                scrape_meiros.apply_async(
-                    args=[session_id, session.last_processed_index + 1],
-                    countdown=30
-                )
-            elif website_config['scraper_type'] == 'legacyjudaica':
-                scrape_legacyjudaica.apply_async(
-                    args=[session_id, session.last_processed_index + 1],
-                    countdown=30
-                )
-            
-            log_message(session, 'info', f'Auto-resume task scheduled')
-            
-            return {
-                'status': 'auto_resuming', 
-                'message': f'Task auto-resuming in 30 seconds from index {session.last_processed_index + 1}',
-            }
+        # Check if product is in stock (assume in stock if price exists)
+        in_stock = bool(price)
+        
+        product_info = {
+            'product_variant_id': product_variant_id,
+            'name': title,
+            'sku': sku,
+            'price': price,
+            'vendor': '',
+            'category': category,  # Use vendor as category since there's no separate category
+            'description': description,
+            'in_stock': in_stock,
+            'link': product_url,
+            'image_link': ",".join(image_urls[:2]),
+            'website': website_name
+        }
+        
+        return product_info
         
     except Exception as e:
-        # Handle any unexpected errors
-        try:
-            session.status = 'failed'
-            session.completed_at = timezone.now()
-            session.save()
-            
-            state.is_running = False
-            state.save()
-            
-            log_message(session, 'error', f'Task failed with unexpected error: {str(e)}', 
-                       exception_details=traceback.format_exc())
-        except:
-            # If we can't even log the error, just pass
-            pass
+        print(f"Error extracting legacyjudaica product info: {e}")
+        return None
+
+def scrape_ozvehadar_products_common(session, resume_from_index=0):
+    """
+    Custom scraping function for ozvehadar.us using BeautifulSoup
+    
+    Args:
+        session: ScrapingSession object
+        resume_from_index: Index to resume from (for resumption)
         
-        return {'status': 'failed', 'message': str(e)}
+    Returns:
+        dict: Scraping results
+    """
+    log_message(session, 'info', f'Starting custom HTML scraping for {session.website.name}')
+    
+    try:
+        # Get product URLs from sitemap
+        product_urls = load_ozvehadar_product_urls()
+        
+        if not product_urls:
+            log_message(session, 'error', 'No product URLs found in sitemap')
+            return {
+                'status': 'failed',
+                'message': 'No product URLs found in sitemap'
+            }
+        
+        log_message(session, 'info', f'Found {len(product_urls)} product URLs from sitemap')
+        
+        # Update total products found
+        session.total_products_found = len(product_urls)
+        session.save()
+        
+        # Process products starting from resume index
+        for idx, product_url in enumerate(product_urls[resume_from_index:], start=resume_from_index):
+            try:
+                # Random delay between requests (5-15 seconds)
+                if idx > resume_from_index:  # Don't delay on first/resumed request
+                    delay = random.randint(5, 15)
+                    log_message(session, 'info', f'Waiting {delay} seconds before next request...')
+                    time.sleep(delay)
+                
+                log_message(session, 'info', f'Processing product {idx + 1}/{len(product_urls)}: {product_url}')
+                
+                # Make request to product page
+                response = requests.get(product_url, headers=HEADERS, timeout=30)
+                response.raise_for_status()
+                
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extract product information
+                product_info = extract_ozvehadar_product_info(soup, product_url, session.website.name)
+                
+                if not product_info:
+                    session.products_failed += 1
+                    log_message(session, 'warning', f'Failed to extract product info for: {product_url}')
+                    continue
+                
+                # Save or update product in database
+                try:
+                    # Try to get existing product by variant ID
+                    try:
+                        product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                        # Update existing product
+                        for key, value in product_info.items():
+                            if key not in ['website']:
+                                setattr(product, key, value)
+                        product.save()
+                        session.products_updated += 1
+                        log_message(session, 'success', f'Updated product: {product_info["name"]}', 
+                                product_url=product_url, product_sku=product_info['sku'])
+                    except Product.DoesNotExist:
+                        # Create new product
+                        try:
+                            product = Product.objects.create(**product_info)
+                            session.products_created += 1
+                            log_message(session, 'success', f'Created new product: {product_info["name"]}', 
+                                    product_url=product_url, product_sku=product_info['sku'])
+                        except Exception as create_error:
+                            # Handle race condition - try to get again
+                            try:
+                                product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                                # Update existing product
+                                for key, value in product_info.items():
+                                    if key not in ['website']:
+                                        setattr(product, key, value)
+                                product.save()
+                                session.products_updated += 1
+                                log_message(session, 'success', f'Updated product (race condition): {product_info["name"]}', 
+                                        product_url=product_url, product_sku=product_info['sku'])
+                            except:
+                                raise create_error
+                    
+                    session.products_scraped += 1
+                    
+                    # Update session progress
+                    session.last_processed_index = idx
+                    session.last_processed_url = product_url
+                    session.save()
+                    
+                except Exception as db_error:
+                    session.products_failed += 1
+                    log_message(session, 'error', f'Database error for product: {str(db_error)}', 
+                            product_url=product_url, product_sku=product_info['sku'], 
+                            exception_details=traceback.format_exc())
+                    continue
+                
+            except requests.exceptions.RequestException as req_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Request error for product {product_url}: {str(req_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+                
+            except Exception as product_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Error processing product {product_url}: {str(product_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+        
+        return {
+            'status': 'completed',
+            'total_found': session.total_products_found,
+            'scraped': session.products_scraped,
+            'created': session.products_created,
+            'updated': session.products_updated,
+            'failed': session.products_failed
+        }
+        
+    except Exception as e:
+        log_message(session, 'error', f'Critical error in legacyjudaica scraping: {str(e)}', 
+                  exception_details=traceback.format_exc())
+        return {
+            'status': 'failed',
+            'message': str(e)
+        }
 
-# Website-specific scraper functions
-# Queue management for limiting concurrent scrapers to maximum 2
-def check_concurrent_scrapers():
-    """Check how many scrapers are currently running"""
-    running_count = ScrapingState.objects.filter(is_running=True).count()
-    return running_count
 
-def can_start_scraper():
-    """Check if we can start a new scraper (max 2 concurrent)"""
-    return check_concurrent_scrapers() < 2
-
+# shopify websites
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_waterdale_collection(self, session_id, resume_from_page=1):
     """Scraper for Waterdale Collection with queue management"""
@@ -1888,6 +2114,7 @@ def scrape_feldart(self, session_id, resume_from_page=1):
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_colourscrafts(self, session_id, resume_from_page=1):
     """Scraper for Feldart with queue management"""
@@ -2015,6 +2242,7 @@ def scrape_sephardicwarehouse(self, session_id, resume_from_page=1):
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_torahjudaica(self, session_id, resume_from_page=1):
     """Scraper for torahjudaica with queue management"""
@@ -2036,6 +2264,28 @@ def scrape_torahjudaica(self, session_id, resume_from_page=1):
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
 
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_gramcoschoolsupplies(self, session_id, resume_from_page=1):
+    """Scraper for gramcoschoolsupplies with queue management"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_gramcoschoolsupplies.apply_async(
+            args=[session_id, resume_from_page],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'base_url': 'www.gramcoschoolsupplies.com',
+        'custom_domain': None
+    }
+    return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
+# custom websites
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_meiros(self, session_id, resume_from_index=0):
     """Custom scraper for meiros.com with queue management and BeautifulSoup"""
@@ -2079,6 +2329,7 @@ def scrape_ritelite(self, session_id, resume_from_index=0):
         'custom_domain': None
     }
     return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_shaijudaica(self, session_id, resume_from_index=0):
     """Custom scraper for shaijudaica.co.il with queue management and BeautifulSoup"""
@@ -2166,6 +2417,29 @@ def scrape_simchonim(self, session_id, resume_from_index=0):
         'custom_domain': None
     }
     return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_ozvehadar(self, session_id, resume_from_index=0):
+    """Custom scraper for ozvehadar.us with queue management and BeautifulSoup"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_ozvehadar.apply_async(
+            args=[session_id, resume_from_index],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'scraper_type': 'ozvehadar',
+        'base_url': 'ozvehadar.us',
+        'custom_domain': None
+    }
+    return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+
 import logging
 logger = logging.getLogger(__name__)
 

@@ -2,8 +2,57 @@ import requests
 import time
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
-import requests
-import xml.etree.ElementTree as ET
+import random
+
+
+def load_ozvehadar_product_urls():
+    product_links = []
+
+    # Step 1: Fetch main sitemap
+    response = requests.get("https://ozvehadar.us/sitemap/categories")
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    # Find the "Categories" section
+    categories_h2 = soup.find("h2", string="Categories")
+    categories_ul = categories_h2.find_next("ul")
+
+    category_links = []
+    for li in categories_ul.find_all("li", recursive=False):  # only top-level li
+        a = li.find("a", recursive=False)
+        if a:
+            category_links.append(a["href"])
+
+    # Step 2: Iterate over category links
+    for category_url in category_links:
+        next_page = category_url
+
+        while next_page:
+            # Sleep before request (1–3 seconds random)
+            time.sleep(random.uniform(1, 3))
+
+            res = requests.get(next_page)
+            soup_obj = BeautifulSoup(res.content, "html.parser")
+
+            # Grab all products on this page
+            products = soup_obj.select("ul.productGrid li.product")
+            for product in products:
+                a_tag = product.select_one("h3.card-title a")
+                if a_tag and "href" in a_tag.attrs:
+                    product_links.append(a_tag["href"])
+
+            # Find next page
+            li = soup_obj.find("li", class_="pagination-item pagination-item--next")
+            if li:
+                a = li.find("a")
+                if a and "href" in a.attrs:
+                    next_page = a["href"]
+                else:
+                    next_page = None
+            else:
+                next_page = None
+
+    return product_links
+
 
 def load_shaijudaica_product_urls():
     namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}

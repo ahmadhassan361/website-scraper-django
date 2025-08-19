@@ -205,6 +205,9 @@
                     {% if status.current_session %}
                         <div class="mb-3 ">
                             <h6>Current Session</h6>
+                            {% if status.last_run %}
+                                <p class="small">Last run: {{ status.last_run|date:"M d, Y H:i" }}</p>
+                            {% endif %}
                             <hr>
                             <div class="d-flex justify-content-between align-items-center">
                                 <div class="w-50">

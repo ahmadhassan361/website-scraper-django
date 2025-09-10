@@ -5,7 +5,8 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_torahjudaica, scrape_meiros, scrape_legacyjudaica, scrape_simchonim,
                     scrape_colourscrafts, scrape_jewisheducationaltoys, scrape_ritelite,
                     scrape_shaijudaica, scrape_gramcoschoolsupplies, scrape_ozvehadar, scrape_craftsandmore,
-                    scrape_nermitzvah, scrape_thekoshercook_collection)
+                    scrape_nermitzvah, scrape_thekoshercook_collection, scrape_alef_to_tav_collection, 
+                    scrape_chazakkinder_collection)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -37,6 +38,8 @@ SCRAPER_FUNCTIONS = {
     'craftsandmore': scrape_craftsandmore,
     'nermitzvah': scrape_nermitzvah,
     'thekoshercook': scrape_thekoshercook_collection,
+    'alef_to_tav': scrape_alef_to_tav_collection,
+    'chazakkinder': scrape_chazakkinder_collection,
 }
 
 def get_scraper_function(function_name):
@@ -387,6 +390,18 @@ def initialize_websites():
             'url': 'https://www.thekoshercook.com',
             'is_active': True,
             'scraper_function': 'thekoshercook'
+        },
+        {
+            'name': 'alef-to-tav',
+            'url': 'https://alef-to-tav.com',
+            'is_active': True,
+            'scraper_function': 'alef_to_tav'
+        },
+        {
+            'name': 'chazakkinder',
+            'url': 'https://www.chazakkinder.com',
+            'is_active': True,
+            'scraper_function': 'chazakkinder'
         },
     ]
     

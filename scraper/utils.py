@@ -6,7 +6,8 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_colourscrafts, scrape_jewisheducationaltoys, scrape_ritelite,
                     scrape_shaijudaica, scrape_gramcoschoolsupplies, scrape_ozvehadar, scrape_craftsandmore,
                     scrape_nermitzvah, scrape_thekoshercook_collection, scrape_alef_to_tav_collection, 
-                    scrape_chazakkinder_collection, scrape_kaftorjudaica, scrape_mefoarjudaica)
+                    scrape_chazakkinder_collection, scrape_kaftorjudaica, scrape_mefoarjudaica,
+                    scrape_davidjudaica, scrape_zionjudaica)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -42,6 +43,8 @@ SCRAPER_FUNCTIONS = {
     'chazakkinder': scrape_chazakkinder_collection,
     'mefoarjudaica': scrape_mefoarjudaica,
     'kaftorjudaica': scrape_kaftorjudaica,
+    'davidjudaica': scrape_davidjudaica,
+    'zionjudaica': scrape_zionjudaica,
 }
 
 def get_scraper_function(function_name):
@@ -416,6 +419,18 @@ def initialize_websites():
             'url': 'https://www.kaftorjudaica.com',
             'is_active': True,
             'scraper_function': 'kaftorjudaica'
+        },
+        {
+            'name': 'www.davidjudaica.shop',
+            'url': 'https://www.davidjudaica.shop',
+            'is_active': True,
+            'scraper_function': 'davidjudaica'
+        },
+        {
+            'name': 'zionjudaica.com',
+            'url': 'https://zionjudaica.com',
+            'is_active': True,
+            'scraper_function': 'zionjudaica'
         },
     ]
     

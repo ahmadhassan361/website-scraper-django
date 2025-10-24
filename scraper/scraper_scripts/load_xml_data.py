@@ -6,6 +6,38 @@ import random
 import os
 from urllib.parse import urljoin
 
+def get_zionjudaica_urls():
+    sitemap_urls = [
+        "https://zionjudaica.com/product-sitemap.xml",
+        "https://zionjudaica.com/product-sitemap2.xml",
+        "https://zionjudaica.com/product-sitemap3.xml",
+    ]
+    
+    all_urls = []
+
+    for sitemap in sitemap_urls:
+        try:
+            response = requests.get(sitemap, timeout=10)
+            response.raise_for_status()
+
+            root = ET.fromstring(response.content)
+            
+            for url_tag in root.findall(".//{*}url/{*}loc"):
+                url = url_tag.text.strip()
+
+                # Skip images and unwanted URLs
+                if (
+                    "/shop/" not in url
+                    and not url.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+                    and "/wp-content/" not in url
+                ):
+                    all_urls.append(url)
+
+        except Exception as e:
+            print(f"Error fetching {sitemap}: {e}")
+    
+    return all_urls
+
 def load_kaftorjudaica_product_urls():
     BASE_URL = "https://www.kaftorjudaica.com/"
     products = []

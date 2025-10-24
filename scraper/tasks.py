@@ -12,7 +12,7 @@ from .scraper_scripts.load_xml_data import (load_craftsandmore_product_urls,load
                                             load_jewisheducationaltoys_sitemap_product_urls,
                                             load_meiros_sitemap_product_urls, load_legacyjudaica_sitemap_product_urls,
                                             load_simchonim_sitemap_product_urls, load_mefoarjudaica_product_urls,
-                                            load_kaftorjudaica_product_urls)
+                                            load_kaftorjudaica_product_urls, get_zionjudaica_urls)
 from bs4 import BeautifulSoup
 import re
 
@@ -461,6 +461,8 @@ def scrape_custom_website_common(session_id, website_config, task_instance, resu
                 result = scrape_kaftorjudaica_products_common(session, resume_from_index)
             elif website_config['scraper_type'] == 'craftsandmore':
                 result = scrape_craftsandmore_products_common(session, resume_from_index)
+            elif website_config['scraper_type'] == 'zionjudaica':
+                result = scrape_zionjudaica_products_common(session, resume_from_index)
             else:
                 result = {'status': 'failed', 'message': f'Unknown scraper type: {website_config["scraper_type"]}'}
             
@@ -2645,6 +2647,210 @@ def scrape_craftsandmore_products_common(session, resume_from_index=0):
             'message': str(e)
         }
 
+def extract_zionjudaica_product_info(soup, product_url, website_name):
+    """
+    Extract product information from zionjudaica.com product page HTML using BeautifulSoup
+    
+    Args:
+        soup: BeautifulSoup object of the product page
+        product_url: URL of the product page
+        website_name: Name of the website
+        
+    Returns:
+        dict: Product information dictionary
+    """
+    try:
+
+
+
+        title_tag = soup.select_one("h1.fusion-title-heading")
+        title = title_tag.get_text(strip=True) if title_tag else None
+
+        # Description
+        description = ''
+        desc_div = soup.select_one("#productContent p")
+        description = desc_div.get_text(strip=True) if desc_div else None
+
+        # Price
+        
+        
+        price = (soup.select_one("p.price ins bdi") or soup.select_one("p.price bdi")).get_text(strip=True)
+
+        # SKU
+        sku_span = soup.select_one(".sku")
+        sku = sku_span.get_text(strip=True) if sku_span else None
+
+        
+
+        # Image URL
+        image_link = ''
+
+        image = soup.select_one(".woocommerce-product-gallery__image a[href]")
+        image_link = image["href"] if image else ''
+
+        
+
+        category = soup.select("ol.awb-breadcrumb-list li a span")[-1].get_text(strip=True)
+        # Generate unique product variant ID (using URL + SKU)
+        product_variant_id = f"{website_name}_{hash(product_url)}"
+        
+        # Check if product is in stock (assume in stock if price exists)
+        in_stock = bool(price)
+        
+        product_info = {
+            'product_variant_id': product_variant_id,
+            'name': title,
+            'sku': sku,
+            'price': price,
+            'vendor': '',
+            'category': category,  # Use vendor as category since there's no separate category
+            'description': description,
+            'in_stock': in_stock,
+            'link': product_url,
+            'image_link': image_link,
+            'website': website_name
+        }
+        
+        return product_info
+        
+    except Exception as e:
+        print(f"Error extracting legacyjudaica product info: {e}")
+        return None
+
+def scrape_zionjudaica_products_common(session, resume_from_index=0):
+    """
+    Custom scraping function for zionjudaica.com using BeautifulSoup
+    
+    Args:
+        session: ScrapingSession object
+        resume_from_index: Index to resume from (for resumption)
+        
+    Returns:
+        dict: Scraping results
+    """
+    log_message(session, 'info', f'Starting custom HTML scraping for {session.website.name}')
+    
+    try:
+        # Get product URLs from sitemap
+        product_urls = get_zionjudaica_urls()
+        
+        if not product_urls:
+            log_message(session, 'error', 'No product URLs found in sitemap')
+            return {
+                'status': 'failed',
+                'message': 'No product URLs found in sitemap'
+            }
+        
+        log_message(session, 'info', f'Found {len(product_urls)} product URLs from sitemap')
+        
+        # Update total products found
+        session.total_products_found = len(product_urls)
+        session.save()
+        
+        # Process products starting from resume index
+        for idx, product_url in enumerate(product_urls[resume_from_index:], start=resume_from_index):
+            try:
+                # Random delay between requests (5-15 seconds)
+                if idx > resume_from_index:  # Don't delay on first/resumed request
+                    delay = random.randint(5, 15)
+                    log_message(session, 'info', f'Waiting {delay} seconds before next request...')
+                    time.sleep(delay)
+                
+                log_message(session, 'info', f'Processing product {idx + 1}/{len(product_urls)}: {product_url}')
+                
+                # Make request to product page
+                response = requests.get(product_url, headers=HEADERS, timeout=30)
+                response.raise_for_status()
+                
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extract product information
+                product_info = extract_zionjudaica_product_info(soup, product_url, session.website.name)
+                
+                if not product_info:
+                    session.products_failed += 1
+                    log_message(session, 'warning', f'Failed to extract product info for: {product_url}')
+                    continue
+                
+                # Save or update product in database
+                try:
+                    # Try to get existing product by variant ID
+                    try:
+                        product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                        # Update existing product
+                        for key, value in product_info.items():
+                            if key not in ['website']:
+                                setattr(product, key, value)
+                        product.save()
+                        session.products_updated += 1
+                        log_message(session, 'success', f'Updated product: {product_info["name"]}', 
+                                product_url=product_url, product_sku=product_info['sku'])
+                    except Product.DoesNotExist:
+                        # Create new product
+                        try:
+                            product = Product.objects.create(**product_info)
+                            session.products_created += 1
+                            log_message(session, 'success', f'Created new product: {product_info["name"]}', 
+                                    product_url=product_url, product_sku=product_info['sku'])
+                        except Exception as create_error:
+                            # Handle race condition - try to get again
+                            try:
+                                product = Product.objects.get(product_variant_id=product_info['product_variant_id'])
+                                # Update existing product
+                                for key, value in product_info.items():
+                                    if key not in ['website']:
+                                        setattr(product, key, value)
+                                product.save()
+                                session.products_updated += 1
+                                log_message(session, 'success', f'Updated product (race condition): {product_info["name"]}', 
+                                        product_url=product_url, product_sku=product_info['sku'])
+                            except:
+                                raise create_error
+                    
+                    session.products_scraped += 1
+                    
+                    # Update session progress
+                    session.last_processed_index = idx
+                    session.last_processed_url = product_url
+                    session.save()
+                    
+                except Exception as db_error:
+                    session.products_failed += 1
+                    log_message(session, 'error', f'Database error for product: {str(db_error)}', 
+                            product_url=product_url, product_sku=product_info['sku'], 
+                            exception_details=traceback.format_exc())
+                    continue
+                
+            except requests.exceptions.RequestException as req_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Request error for product {product_url}: {str(req_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+                
+            except Exception as product_error:
+                session.products_failed += 1
+                log_message(session, 'error', f'Error processing product {product_url}: {str(product_error)}', 
+                          product_url=product_url, exception_details=traceback.format_exc())
+                continue
+        
+        return {
+            'status': 'completed',
+            'total_found': session.total_products_found,
+            'scraped': session.products_scraped,
+            'created': session.products_created,
+            'updated': session.products_updated,
+            'failed': session.products_failed
+        }
+        
+    except Exception as e:
+        log_message(session, 'error', f'Critical error in zionjudaica scraping: {str(e)}', 
+                  exception_details=traceback.format_exc())
+        return {
+            'status': 'failed',
+            'message': str(e)
+        }
+
 
 # shopify websites
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
@@ -3006,6 +3212,27 @@ def scrape_gramcoschoolsupplies(self, session_id, resume_from_page=1):
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
 
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_davidjudaica(self, session_id, resume_from_page=1):
+    """Scraper for davidjudaica.shop with queue management"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_davidjudaica.apply_async(
+            args=[session_id, resume_from_page],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'base_url': 'www.davidjudaica.shop',
+        'custom_domain': None
+    }
+    return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
 # custom websites
 @shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
 def scrape_meiros(self, session_id, resume_from_index=0):
@@ -3222,6 +3449,28 @@ def scrape_craftsandmore(self, session_id, resume_from_index=0):
     website_config = {
         'scraper_type': 'craftsandmore',
         'base_url': 'craftsandmore.com',
+        'custom_domain': None
+    }
+    return scrape_custom_website_common(session_id, website_config, self, resume_from_index)
+
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_zionjudaica(self, session_id, resume_from_index=0):
+    """Custom scraper for zionjudaica.com with queue management and BeautifulSoup"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_zionjudaica.apply_async(
+            args=[session_id, resume_from_index],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'scraper_type': 'zionjudaica',
+        'base_url': 'zionjudaica.com',
         'custom_domain': None
     }
     return scrape_custom_website_common(session_id, website_config, self, resume_from_index)

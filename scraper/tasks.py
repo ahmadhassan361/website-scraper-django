@@ -3842,6 +3842,28 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
             # Get sheet metadata
             sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
             sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+            current_row_count = sheet_metadata['sheets'][0]['properties']['gridProperties']['rowCount']
+            
+            # Expand sheet if needed (add 100 extra rows for safety)
+            required_rows = total_products + 100
+            if current_row_count < required_rows:
+                logger.info(f"Expanding sheet from {current_row_count} to {required_rows} rows...")
+                sheets_service.spreadsheets().batchUpdate(
+                    spreadsheetId=file_id,
+                    body={
+                        "requests": [{
+                            "updateSheetProperties": {
+                                "properties": {
+                                    "sheetId": sheet_id,
+                                    "gridProperties": {
+                                        "rowCount": required_rows
+                                    }
+                                },
+                                "fields": "gridProperties.rowCount"
+                            }
+                        }]
+                    }
+                ).execute()
             
             # Clear existing data (keep header)
             logger.info("Clearing existing data...")

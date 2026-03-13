@@ -162,3 +162,191 @@ class GoogleOAuth2Token(models.Model):
     def is_expired(self):
         from django.utils import timezone
         return timezone.now() > self.expires_at
+
+
+# ==================== PRODUCT SYNC MODELS ====================
+
+class VendorConfiguration(models.Model):
+    """Model to store vendor-specific configuration for product sync"""
+    website = models.OneToOneField(Website, on_delete=models.CASCADE, related_name='vendor_config')
+    
+    # Vendor identification
+    vendor_id = models.IntegerField(help_text="Vendor ID for website upload CSV")
+    sku_prefix = models.CharField(max_length=50, blank=True, default='', 
+                                   help_text="Prefix added to SKU (e.g., 'RLC-', 'IBSLA')")
+    
+    # Pricing configuration
+    markup_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.00,
+                                           help_text="Percentage to adjust price (+/- %). Example: 15.00 for 15% markup")
+    
+    # Default settings for products
+    default_category_id = models.CharField(max_length=100, blank=True, default='',
+                                           help_text="Default category ID for website")
+    default_product_type_id = models.CharField(max_length=100, blank=True, default='3',
+                                               help_text="Default product type ID")
+    track_inventory = models.BooleanField(default=True,
+                                         help_text="Default: Track inventory for this vendor")
+    sell_out_of_stock = models.BooleanField(default=True,
+                                           help_text="Default: Allow selling when out of stock")
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Vendor Configuration"
+        verbose_name_plural = "Vendor Configurations"
+        ordering = ['website__name']
+    
+    def __str__(self):
+        return f"{self.website.name} - Prefix: {self.sku_prefix or 'None'}"
+    
+    def apply_sku_transform(self, original_sku):
+        """Add vendor prefix to SKU"""
+        if not original_sku:
+            return ''
+        if self.sku_prefix:
+            return f"{self.sku_prefix}{original_sku}"
+        return original_sku
+    
+    def remove_sku_prefix(self, prefixed_sku):
+        """Remove vendor prefix from SKU to get original"""
+        if not prefixed_sku or not self.sku_prefix:
+            return prefixed_sku
+        if prefixed_sku.startswith(self.sku_prefix):
+            return prefixed_sku[len(self.sku_prefix):]
+        return prefixed_sku
+    
+    def apply_price_markup(self, original_price):
+        """Apply markup percentage to price"""
+        from decimal import Decimal
+        try:
+            # Clean the price string and convert to Decimal
+            cleaned_price = str(original_price).replace('$', '').replace(',', '').strip()
+            price = Decimal(cleaned_price)
+            
+            if self.markup_percentage != 0:
+                # Convert markup_percentage to Decimal for calculation
+                markup_decimal = Decimal(str(self.markup_percentage))
+                markup_multiplier = Decimal('1') + (markup_decimal / Decimal('100'))
+                new_price = price * markup_multiplier
+                return f"${new_price:.2f}"
+            return f"${price:.2f}"
+        except (ValueError, AttributeError, Exception) as e:
+            # If anything fails, return original price
+            return original_price
+
+
+class ProductSyncStatus(models.Model):
+    """Model to track product synchronization status with website"""
+    STATUS_CHOICES = [
+        ('new', 'New - Not on Website'),
+        ('synced', 'Synced - On Website'),
+        ('updated', 'Updated - Needs Re-sync'),
+        ('removed', 'Removed from Website'),
+    ]
+    
+    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name='sync_status')
+    
+    # Website status
+    on_website = models.BooleanField(default=False, 
+                                     help_text="Is this product currently on the website?")
+    website_sku = models.CharField(max_length=500, blank=True, default='',
+                                   help_text="SKU format as it appears on website (with prefix)")
+    website_product_id = models.CharField(max_length=100, blank=True, default='',
+                                         help_text="Product ID from website export")
+    
+    # Sync tracking
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
+    last_synced_at = models.DateTimeField(null=True, blank=True,
+                                          help_text="Last time this product was synced")
+    last_export_at = models.DateTimeField(null=True, blank=True,
+                                         help_text="Last time included in export")
+    
+    # User selection
+    selected_for_export = models.BooleanField(default=False,
+                                             help_text="Selected by user for next export")
+    
+    # Custom overrides (optional - override vendor defaults)
+    custom_category_id = models.CharField(max_length=100, blank=True, default='',
+                                         help_text="Override default category")
+    custom_price = models.CharField(max_length=50, blank=True, default='',
+                                    help_text="Override scraped price")
+    custom_track_inventory = models.BooleanField(null=True, blank=True,
+                                                 help_text="Override default inventory tracking")
+    custom_sell_out_of_stock = models.BooleanField(null=True, blank=True,
+                                                   help_text="Override default out of stock selling")
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Product Sync Status"
+        verbose_name_plural = "Product Sync Statuses"
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['on_website']),
+            models.Index(fields=['status']),
+            models.Index(fields=['selected_for_export']),
+        ]
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.get_status_display()}"
+    
+    def mark_on_website(self, website_sku, website_product_id=''):
+        """Mark product as synced to website"""
+        from django.utils import timezone
+        self.on_website = True
+        self.website_sku = website_sku
+        self.website_product_id = website_product_id
+        self.status = 'synced'
+        self.last_synced_at = timezone.now()
+        self.save()
+    
+    def mark_as_new(self):
+        """Mark product as new (not on website)"""
+        self.on_website = False
+        self.status = 'new'
+        self.save()
+
+
+class WebsiteImportLog(models.Model):
+    """Model to log website product imports"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    filename = models.CharField(max_length=500)
+    vendor_website = models.CharField(max_length=100, blank=True, default='', help_text="Vendor/website being compared")
+    celery_task_id = models.CharField(max_length=255, null=True, blank=True)
+    
+    # Statistics
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    total_rows = models.IntegerField(default=0, help_text="Total rows in CSV")
+    processed_rows = models.IntegerField(default=0)
+    matched_products = models.IntegerField(default=0, help_text="Products matched in database")
+    new_products_found = models.IntegerField(default=0, help_text="Products in DB but not in import")
+    skipped_rows = models.IntegerField(default=0)
+    progress_percentage = models.IntegerField(default=0)
+    
+    # Error tracking
+    error_message = models.TextField(blank=True, default='')
+    
+    # Metadata
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        verbose_name = "Website Import Log"
+        verbose_name_plural = "Website Import Logs"
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Import {self.id} - {self.filename} - {self.get_status_display()}"

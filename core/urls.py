@@ -43,6 +43,14 @@ urlpatterns = [
     path('start-all-scraping/', start_all_scraping, name='start_all_scraping'),
     path('stop-all-scraping/', stop_all_scraping, name='stop_all_scraping'),
     
+    # Fast Scrapers (Shopify)
+    path('start-all-fast-scraping/', start_all_fast_scraping, name='start_all_fast_scraping'),
+    path('stop-all-fast-scraping/', stop_all_fast_scraping, name='stop_all_fast_scraping'),
+    
+    # Slow Scrapers (Custom HTML)
+    path('start-all-slow-scraping/', start_all_slow_scraping, name='start_all_slow_scraping'),
+    path('stop-all-slow-scraping/', stop_all_slow_scraping, name='stop_all_slow_scraping'),
+    
     # Export Functionality
     path('export-products/', export_products, name='export_products'),
     path('export-status/<int:export_id>/', export_status, name='export_status'),

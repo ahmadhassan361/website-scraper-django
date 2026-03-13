@@ -410,6 +410,234 @@ def scrape_shopify_website_common(session_id, website_config, task_instance, res
         
         return {'status': 'failed', 'message': str(e)}
 
+
+# ==================== PRODUCT SYNC TASKS ====================
+
+@shared_task(bind=True, soft_time_limit=1800, time_limit=1860)
+def import_website_products_task(self, import_log_id, file_path, vendor_website=None):
+    """
+    Import products from website export CSV and update sync status (vendor-specific)
+    
+    Args:
+        import_log_id: WebsiteImportLog ID
+        file_path: Path to the CSV file
+        vendor_website: Filter by specific vendor/website name
+    """
+    from django.utils import timezone
+    from .models import WebsiteImportLog, Product, VendorConfiguration, ProductSyncStatus
+    from .sync_utils import CSVParser, SKUMatcher
+    
+    try:
+        # Get import log
+        import_log = WebsiteImportLog.objects.get(id=import_log_id)
+        import_log.status = 'processing'
+        import_log.celery_task_id = self.request.id
+        import_log.save()
+        
+        # Parse CSV file
+        try:
+            website_products = CSVParser.parse_website_export(file_path)
+        except Exception as parse_error:
+            import_log.status = 'failed'
+            import_log.error_message = f"CSV parsing error: {str(parse_error)}"
+            import_log.save()
+            return {'status': 'failed', 'message': str(parse_error)}
+        
+        # Update total rows
+        import_log.total_rows = len(website_products)
+        import_log.save()
+        
+        if not website_products:
+            import_log.status = 'failed'
+            import_log.error_message = "No products found in CSV"
+            import_log.save()
+            return {'status': 'failed', 'message': 'No products found in CSV'}
+        
+        matched_count = 0
+        processed_count = 0
+        skipped_count = 0
+        website_skus = set()
+        
+        # Process each row from CSV
+        for idx, csv_row in enumerate(website_products):
+            try:
+                website_sku = csv_row['sku']
+                website_product_id = csv_row['id']
+                
+                if not website_sku:
+                    skipped_count += 1
+                    processed_count += 1
+                    continue
+                
+                # Track website SKUs
+                website_skus.add(website_sku)
+                
+                # Match product in database (vendor-specific)
+                product = SKUMatcher.match_product_by_sku(website_sku, website_product_id, vendor_website)
+                
+                if product:
+                    # Create or update sync status
+                    sync_status, created = ProductSyncStatus.objects.get_or_create(
+                        product=product,
+                        defaults={
+                            'on_website': True,
+                            'website_sku': website_sku,
+                            'website_product_id': website_product_id,
+                            'status': 'synced'
+                        }
+                    )
+                    
+                    if not created:
+                        # Update existing sync status
+                        sync_status.mark_on_website(website_sku, website_product_id)
+                    
+                    matched_count += 1
+                else:
+                    skipped_count += 1
+                
+                processed_count += 1
+                
+                # Update progress every 10 rows
+                if processed_count % 10 == 0:
+                    progress = int((processed_count / len(website_products)) * 100)
+                    import_log.processed_rows = processed_count
+                    import_log.matched_products = matched_count
+                    import_log.skipped_rows = skipped_count
+                    import_log.progress_percentage = progress
+                    import_log.save()
+                
+            except Exception as row_error:
+                skipped_count += 1
+                processed_count += 1
+                continue
+        
+        # Now find products that are NOT on website (new products)
+        # Filter by specific vendor if provided
+        if vendor_website:
+            vendor_configs = VendorConfiguration.objects.filter(
+                website__name__iexact=vendor_website,
+                is_active=True
+            )
+        else:
+            vendor_configs = VendorConfiguration.objects.filter(is_active=True)
+        
+        new_products_count = 0
+        
+        for vendor_config in vendor_configs:
+            website = vendor_config.website
+            
+            # Get all products for this website
+            website_products_qs = Product.objects.filter(website__iexact=website.name)
+            
+            for product in website_products_qs:
+                # Transform SKU to website format
+                website_format_sku = vendor_config.apply_sku_transform(product.sku or '')
+                
+                # Check if this SKU is NOT in the website export
+                if website_format_sku not in website_skus:
+                    # This product is in our DB but NOT on the website
+                    sync_status, created = ProductSyncStatus.objects.get_or_create(
+                        product=product,
+                        defaults={
+                            'on_website': False,
+                            'status': 'new',
+                            'website_sku': website_format_sku
+                        }
+                    )
+                    
+                    if not created and sync_status.on_website:
+                        # Product was previously on website but now removed
+                        sync_status.on_website = False
+                        sync_status.status = 'removed'
+                        sync_status.save()
+                    
+                    if not sync_status.on_website:
+                        new_products_count += 1
+        
+        # Complete import
+        import_log.status = 'completed'
+        import_log.processed_rows = processed_count
+        import_log.matched_products = matched_count
+        import_log.new_products_found = new_products_count
+        import_log.skipped_rows = skipped_count
+        import_log.progress_percentage = 100
+        import_log.completed_at = timezone.now()
+        import_log.save()
+        
+        return {
+            'status': 'completed',
+            'total_rows': len(website_products),
+            'matched': matched_count,
+            'new_products': new_products_count,
+            'skipped': skipped_count
+        }
+        
+    except Exception as e:
+        try:
+            import_log.status = 'failed'
+            import_log.error_message = str(e)
+            import_log.completed_at = timezone.now()
+            import_log.save()
+        except:
+            pass
+        
+        return {'status': 'failed', 'message': str(e)}
+
+
+@shared_task(bind=True, soft_time_limit=1800, time_limit=1860)
+def export_products_to_website_task(self, product_ids, output_filename):
+    """
+    Export selected products to website upload CSV format
+    
+    Args:
+        product_ids: List of Product IDs to export
+        output_filename: Output CSV filename
+        
+    Returns:
+        Dict with status and file path
+    """
+    from django.conf import settings
+    from .models import Product, ProductSyncStatus
+    from .sync_utils import CSVParser
+    from django.utils import timezone
+    import os
+    
+    try:
+        # Get products
+        products = Product.objects.filter(id__in=product_ids)
+        
+        if not products.exists():
+            return {'status': 'failed', 'message': 'No products found'}
+        
+        # Generate output file path
+        output_path = os.path.join(settings.BASE_DIR, output_filename)
+        
+        # Generate CSV
+        count = CSVParser.generate_upload_csv(list(products), output_path)
+        
+        if count == 0:
+            return {'status': 'failed', 'message': 'No products could be exported (check vendor configurations)'}
+        
+        # Update sync status for exported products
+        for product in products:
+            sync_status, created = ProductSyncStatus.objects.get_or_create(
+                product=product,
+                defaults={'status': 'new'}
+            )
+            sync_status.last_export_at = timezone.now()
+            sync_status.selected_for_export = False  # Unselect after export
+            sync_status.save()
+        
+        return {
+            'status': 'completed',
+            'file_path': output_path,
+            'products_exported': count,
+            'message': f'Successfully exported {count} products to {output_filename}'
+        }
+        
+    except Exception as e:
+        return {'status': 'failed', 'message': str(e)}
+
 def scrape_custom_website_common(session_id, website_config, task_instance, resume_from_index=0):
     """
     Common custom scraper function for non-Shopify websites
@@ -787,6 +1015,7 @@ def extract_ritelite_product_info(soup, product_url, website_name):
         # Extract SKU
         sku_elem = soup.find("h4", class_="mainhead myriad-pro-bold uppercase text-center")
         sku = sku_elem.get_text(strip=True) if sku_elem else ''
+        sku = re.sub(r'\bitem\b', '', sku, flags=re.IGNORECASE).strip()
         
         # Extract description
         description = ''
@@ -3249,6 +3478,27 @@ def scrape_davidjudaica(self, session_id, resume_from_page=1):
     
     website_config = {
         'base_url': 'www.davidjudaica.shop',
+        'custom_domain': None
+    }
+    return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)
+
+@shared_task(bind=True, soft_time_limit=7200, time_limit=7260)
+def scrape_classictouchdecor(self, session_id, resume_from_page=1):
+    """Scraper for classictouchdecor.com with queue management"""
+    # Check if we can start (max 2 concurrent scrapers)
+    if not can_start_scraper():
+        session = ScrapingSession.objects.get(id=session_id)
+        log_message(session, 'info', 'Scraper queued - waiting for available slot (max 2 concurrent scrapers)')
+        
+        # Retry after 30 seconds
+        scrape_classictouchdecor.apply_async(
+            args=[session_id, resume_from_page],
+            countdown=30
+        )
+        return {'status': 'queued', 'message': 'Waiting for available scraper slot'}
+    
+    website_config = {
+        'base_url': 'www.classictouchdecor.com',
         'custom_domain': None
     }
     return scrape_shopify_website_common(session_id, website_config, self, resume_from_page)

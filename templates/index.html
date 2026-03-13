@@ -9,7 +9,28 @@
       <div class="collapse navbar-collapse" id="navbarSupportedContent">
         <ul class="navbar-nav me-auto mb-2 mb-lg-0">
           <li class="nav-item">
-            <span class="navbar-text">Welcome, {{ user.username }}</span>
+            <a class="nav-link active" href="/">
+              <i class="fas fa-home"></i> Dashboard
+            </a>
+          </li>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+              <i class="fas fa-sync-alt"></i> Product Sync
+            </a>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="{% url 'scraper:product_sync_dashboard' %}">
+                <i class="fas fa-tachometer-alt"></i> Sync Dashboard
+              </a></li>
+              <li><a class="dropdown-item" href="{% url 'scraper:vendor_management' %}">
+                <i class="fas fa-cog"></i> Vendor Management
+              </a></li>
+              <li><a class="dropdown-item" href="{% url 'scraper:import_history' %}">
+                <i class="fas fa-history"></i> Import History
+              </a></li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <span class="navbar-text ms-3">Welcome, {{ user.username }}</span>
           </li>
         </ul>
         <a href="{% url 'logout' %}" class="btn btn-danger">Logout</a>
@@ -46,18 +67,58 @@
                     <h5>Bulk Operations & Export</h5>
                 </div>
                 <div class="card-body">
-                    <div class="d-flex">
-                        <div class="">
-                            <h6>Bulk Scraping Operations</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>All Websites</h6>
                             <form method="post" action="{% url 'start_all_scraping' %}" style="display: inline;">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-success me-2">Start All Websites</button>
+                                <button type="submit" class="btn btn-success btn-sm me-2">
+                                    <i class="fas fa-play"></i> Start All
+                                </button>
                             </form>
                             <form method="post" action="{% url 'stop_all_scraping' %}" style="display: inline;">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-danger">Stop All Websites</button>
+                                <button type="submit" class="btn btn-danger btn-sm">
+                                    <i class="fas fa-stop"></i> Stop All
+                                </button>
                             </form>
                         </div>
+                        <div class="col-md-3">
+                            <h6 class="text-success">
+                                <i class="fas fa-bolt"></i> Fast Scrapers
+                            </h6>
+                            <form method="post" action="{% url 'start_all_fast_scraping' %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-sm me-2">
+                                    <i class="fas fa-play"></i> Start
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'stop_all_fast_scraping' %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger btn-sm">
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </form>
+                        </div>
+                        <div class="col-md-3">
+                            <h6 class="text-warning">
+                                <i class="fas fa-clock"></i> Slow Scrapers
+                            </h6>
+                            <form method="post" action="{% url 'start_all_slow_scraping' %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-warning btn-sm text-dark me-2">
+                                    <i class="fas fa-play"></i> Start
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'stop_all_slow_scraping' %}" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-danger btn-sm">
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
                         <div class="ms-2 border-start border-1 ps-2">
                             <h6>Export Products</h6>
                             <div class="dropdown">
@@ -190,8 +251,19 @@
     <div class="col-12">
         <h2>Website Scraping Status</h2>
     </div>
-    <div class="row mb-4" >
-        {% for status in website_statuses %}
+    
+    <!-- Fast Scrapers (Shopify) -->
+    {% if fast_websites %}
+    <div class="row mb-3">
+        <div class="col-12">
+            <h4 class="text-success">
+                <i class="fas fa-bolt"></i> Fast Scraping - {{ fast_websites|length }} websites
+            </h4>
+            <p class="text-muted small">These websites can be scrape in 30 minutes.</p>
+        </div>
+    </div>
+    <div class="row mb-4">
+        {% for status in fast_websites %}
         <div class="col-md-6 col-lg-4 mb-3">
             <div class="card h-100" id="website-card-{{ status.website_id }}">
                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -263,10 +335,100 @@
         </div>
         {% empty %}
         <div class="col-12">
-            <div class="alert alert-info">No websites configured for scraping.</div>
+            <div class="alert alert-info">No fast scraping websites configured.</div>
         </div>
         {% endfor %}
     </div>
+    {% endif %}
+    
+    <!-- Slow Scrapers (Custom HTML) -->
+    {% if slow_websites %}
+    <div class="row mb-3 mt-5">
+        <div class="col-12">
+            <h4 class="text-warning">
+                <i class="fas fa-clock"></i> Long Time Required (Custom HTML Scraping) - {{ slow_websites|length }} websites
+            </h4>
+            <p class="text-muted small">Parses individual HTML pages, requires more time for data extraction</p>
+        </div>
+    </div>
+    <div class="row mb-4">
+        {% for status in slow_websites %}
+        <div class="col-md-6 col-lg-4 mb-3">
+            <div class="card h-100 border-warning" id="website-card-{{ status.website_id }}">
+                <div class="card-header d-flex justify-content-between align-items-center bg-warning bg-opacity-10">
+                    <a href="{{status.website_link}}" target="_blank" class="text-decoration-non btn p-0 m-0"><h5 class="mb-0">{{ status.website_name|title }}</h5></a>
+                    
+                    <span class="badge {% if status.is_running %}bg-success{% else %}bg-secondary{% endif %}" id="status-badge-{{ status.website_id }}">
+                        {% if status.is_running %}Running{% else %}Idle{% endif %}
+                    </span>
+                </div>
+                <div class="card-body">
+                    {% if status.current_session %}
+                        <div class="mb-3 ">
+                            <h6>Current Session</h6>
+                            {% if status.last_run %}
+                                <p class="small">Last run: {{ status.last_run|date:"M d, Y H:i" }}</p>
+                            {% endif %}
+                            <hr>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="w-50">
+                                    <p class="mb-1">Status: <span class="badge bg-info">{{ status.current_session.status|title }}</span></p>
+                                    <p class="mb-1">Products Found: <span id="total-found-{{ status.website_id }}">{{ status.current_session.total_products_found }}</span></p>
+                                    <p class="mb-1">Scraped: <span id="scraped-{{ status.website_id }}">{{ status.current_session.products_scraped }}</span></p>
+
+                                </div>
+                                <div class="w-50">
+
+                                    <p class="mb-1">Created: <span id="created-{{ status.website_id }}">{{ status.current_session.products_created }}</span></p>
+                                    <p class="mb-1">Updated: <span id="updated-{{ status.website_id }}">{{ status.current_session.products_updated }}</span></p>
+                                    <p class="mb-1">Failed: <span id="failed-{{ status.website_id }}">{{ status.current_session.products_failed }}</span></p>
+                                </div>
+                            </div>
+                            {% if status.current_session.total_products_found > 0 %}
+                            <hr>
+                                <p class="mb-1">Progress: <span id="progress-text-{{ status.website_id }}">{{ status.current_session.products_scraped }}/{{ status.current_session.total_products_found }}</span></p>
+                                <div class="progress mb-2">
+                                    <div class="progress-bar bg-warning" role="progressbar" 
+                                         style="width: {% if status.current_session.total_products_found > 0 %}{% widthratio status.current_session.products_scraped status.current_session.total_products_found 100 %}{% else %}0{% endif %}%"
+                                         id="progress-bar-{{ status.website_id }}">
+                                         {% if status.current_session.total_products_found > 0 %}{% widthratio status.current_session.products_scraped status.current_session.total_products_found 100 %}%{% endif %}
+                                    </div>
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted">No active session</p>
+                        {% if status.last_run %}
+                            <p class="small">Last run: {{ status.last_run|date:"M d, Y H:i" }}</p>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                <div class="card-footer">
+                    {% if status.is_running %}
+                        <form method="post" action="{% url 'stop_scraping' status.website_id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger btn-sm">Stop Scraping</button>
+                        </form>
+                        {% if status.current_session %}
+                            <a href="{% url 'session_details' status.current_session.id %}" class="btn btn-info btn-sm">View Details</a>
+                        {% endif %}
+                    {% else %}
+                        <form method="post" action="{% url 'start_scraping' status.website_id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success btn-sm">Start Scraping</button>
+                        </form>
+                    {% endif %}
+                    <button class="btn btn-secondary btn-sm" onclick="refreshWebsiteStatus({{ status.website_id }})">Refresh</button>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12">
+            <div class="alert alert-info">No custom HTML scraping websites configured.</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- Recent Session Groups -->
     <div>

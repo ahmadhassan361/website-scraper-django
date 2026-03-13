@@ -1,0 +1,306 @@
+{% extends 'components/base.html' %}
+
+{% block main %}
+<nav class="navbar navbar-expand-lg bg-dark border-bottom border-body" data-bs-theme="dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">Website Scraper Dashboard</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item">
+            <a class="nav-link" href="/">
+              <i class="fas fa-home"></i> Dashboard
+            </a>
+          </li>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle active" href="#" role="button" data-bs-toggle="dropdown">
+              <i class="fas fa-sync-alt"></i> Product Sync
+            </a>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="{% url 'scraper:product_sync_dashboard' %}">
+                <i class="fas fa-tachometer-alt"></i> Sync Dashboard
+              </a></li>
+              <li><a class="dropdown-item" href="{% url 'scraper:vendor_management' %}">
+                <i class="fas fa-cog"></i> Vendor Management
+              </a></li>
+              <li><a class="dropdown-item active" href="{% url 'scraper:import_history' %}">
+                <i class="fas fa-history"></i> Import History
+              </a></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+</nav>
+
+<div class="container-fluid mt-4">
+    <!-- Page Header -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h2>Import History</h2>
+            <p class="text-muted">Track all website product import operations</p>
+        </div>
+    </div>
+
+    <!-- Import History Table -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Recent Imports (Last 50)</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th width="60">ID</th>
+                                    <th>Filename</th>
+                                    <th>Status</th>
+                                    <th>Progress</th>
+                                    <th>Statistics</th>
+                                    <th>Uploaded By</th>
+                                    <th>Created</th>
+                                    <th>Completed</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for import_log in imports %}
+                                <tr>
+                                    <td><strong>#{{ import_log.id }}</strong></td>
+                                    <td>
+                                        <i class="fas fa-file-csv text-success"></i>
+                                        {{ import_log.filename }}
+                                    </td>
+                                    <td>
+                                        {% if import_log.status == 'completed' %}
+                                            <span class="badge badge-success">Completed</span>
+                                        {% elif import_log.status == 'failed' %}
+                                            <span class="badge badge-danger">Failed</span>
+                                        {% elif import_log.status == 'processing' %}
+                                            <span class="badge badge-info">Processing</span>
+                                        {% else %}
+                                            <span class="badge badge-secondary">Pending</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="progress" style="height: 20px; min-width: 100px;">
+                                            <div class="progress-bar 
+                                                {% if import_log.status == 'completed' %}bg-success
+                                                {% elif import_log.status == 'failed' %}bg-danger
+                                                {% else %}bg-info{% endif %}" 
+                                                role="progressbar" 
+                                                style="width: {{ import_log.progress_percentage }}%">
+                                                {{ import_log.progress_percentage }}%
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <small>
+                                            <strong>Total:</strong> {{ import_log.total_rows|default:0 }}<br>
+                                            <strong>Matched:</strong> <span class="text-success">{{ import_log.matched_products|default:0 }}</span><br>
+                                            <strong>New:</strong> <span class="text-warning">{{ import_log.new_products_found|default:0 }}</span><br>
+                                            <strong>Skipped:</strong> <span class="text-danger">{{ import_log.skipped_rows|default:0 }}</span>
+                                        </small>
+                                    </td>
+                                    <td>
+                                        {% if import_log.uploaded_by %}
+                                            <i class="fas fa-user"></i> {{ import_log.uploaded_by.username }}
+                                        {% else %}
+                                            <span class="text-muted">System</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <small>{{ import_log.created_at|date:"Y-m-d H:i:s" }}</small>
+                                    </td>
+                                    <td>
+                                        {% if import_log.completed_at %}
+                                            <small>{{ import_log.completed_at|date:"Y-m-d H:i:s" }}</small>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if import_log.status == 'failed' and import_log.error_message %}
+                                            <button class="btn btn-sm btn-danger" 
+                                                    data-toggle="modal" 
+                                                    data-target="#errorModal{{ import_log.id }}">
+                                                <i class="fas fa-exclamation-triangle"></i> View Error
+                                            </button>
+                                            
+                                            <!-- Error Modal -->
+                                            <div class="modal fade" id="errorModal{{ import_log.id }}" tabindex="-1">
+                                                <div class="modal-dialog">
+                                                    <div class="modal-content">
+                                                        <div class="modal-header bg-danger text-white">
+                                                            <h5 class="modal-title">Import Error - #{{ import_log.id }}</h5>
+                                                            <button type="button" class="close text-white" data-dismiss="modal">
+                                                                <span>&times;</span>
+                                                            </button>
+                                                        </div>
+                                                        <div class="modal-body">
+                                                            <p><strong>Filename:</strong> {{ import_log.filename }}</p>
+                                                            <p><strong>Error Message:</strong></p>
+                                                            <pre class="bg-light p-3 border">{{ import_log.error_message }}</pre>
+                                                        </div>
+                                                        <div class="modal-footer">
+                                                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        {% elif import_log.status == 'processing' %}
+                                            <button class="btn btn-sm btn-info" onclick="checkStatus({{ import_log.id }})">
+                                                <i class="fas fa-sync"></i> Refresh
+                                            </button>
+                                        {% elif import_log.status == 'completed' %}
+                                            <button class="btn btn-sm btn-success" 
+                                                    data-toggle="modal" 
+                                                    data-target="#detailsModal{{ import_log.id }}">
+                                                <i class="fas fa-info-circle"></i> Details
+                                            </button>
+                                            
+                                            <!-- Details Modal -->
+                                            <div class="modal fade" id="detailsModal{{ import_log.id }}" tabindex="-1">
+                                                <div class="modal-dialog">
+                                                    <div class="modal-content">
+                                                        <div class="modal-header bg-success text-white">
+                                                            <h5 class="modal-title">Import Details - #{{ import_log.id }}</h5>
+                                                            <button type="button" class="close text-white" data-dismiss="modal">
+                                                                <span>&times;</span>
+                                                            </button>
+                                                        </div>
+                                                        <div class="modal-body">
+                                                            <h6>File Information</h6>
+                                                            <p><strong>Filename:</strong> {{ import_log.filename }}</p>
+                                                            <p><strong>Uploaded By:</strong> {{ import_log.uploaded_by.username|default:"System" }}</p>
+                                                            <p><strong>Started:</strong> {{ import_log.created_at|date:"Y-m-d H:i:s" }}</p>
+                                                            <p><strong>Completed:</strong> {{ import_log.completed_at|date:"Y-m-d H:i:s" }}</p>
+                                                            
+                                                            <hr>
+                                                            
+                                                            <h6>Import Statistics</h6>
+                                                            <table class="table table-sm">
+                                                                <tr>
+                                                                    <td><strong>Total Rows:</strong></td>
+                                                                    <td>{{ import_log.total_rows }}</td>
+                                                                </tr>
+                                                                <tr>
+                                                                    <td><strong>Processed Rows:</strong></td>
+                                                                    <td>{{ import_log.processed_rows }}</td>
+                                                                </tr>
+                                                                <tr class="table-success">
+                                                                    <td><strong>Matched Products:</strong></td>
+                                                                    <td>{{ import_log.matched_products }}</td>
+                                                                </tr>
+                                                                <tr class="table-warning">
+                                                                    <td><strong>New Products Found:</strong></td>
+                                                                    <td>{{ import_log.new_products_found }}</td>
+                                                                </tr>
+                                                                <tr class="table-danger">
+                                                                    <td><strong>Skipped Rows:</strong></td>
+                                                                    <td>{{ import_log.skipped_rows }}</td>
+                                                                </tr>
+                                                            </table>
+                                                            
+                                                            <div class="alert alert-info">
+                                                                <strong>Success Rate:</strong>
+                                                                {% if import_log.total_rows > 0 %}
+                                                                    {% widthratio import_log.matched_products import_log.total_rows 100 %}%
+                                                                {% else %}
+                                                                    0%
+                                                                {% endif %}
+                                                            </div>
+                                                        </div>
+                                                        <div class="modal-footer">
+                                                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="9" class="text-center py-5">
+                                        <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                                        <p class="text-muted">No import history found.</p>
+                                        <a href="{% url 'scraper:product_sync_dashboard' %}" class="btn btn-primary">
+                                            <i class="fas fa-upload"></i> Start First Import
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Guide -->
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Import Guide</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>What does import do?</h6>
+                            <ul>
+                                <li>Reads website export CSV</li>
+                                <li>Matches products by SKU (removes vendor prefixes)</li>
+                                <li>Marks matched products as "on website"</li>
+                                <li>Identifies new products not on website</li>
+                                <li>Updates ProductSyncStatus for all products</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Expected CSV Format:</h6>
+                            <pre class="bg-light p-3 border">ID,Name,Sku,Barcode,ISBN
+12345,Product Name,RLC-22-N,,
+12346,Another Product,IBSLA123,,</pre>
+                            <p class="text-muted">
+                                <small>
+                                    <strong>Note:</strong> The SKU column should contain the prefixed SKU as it appears on your website.
+                                    The system will automatically remove the prefix to match database products.
+                                </small>
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="alert alert-success">
+                        <i class="fas fa-lightbulb"></i>
+                        <strong>Pro Tip:</strong> Import your website export regularly (weekly) to keep sync status accurate.
+                        This helps you identify new products that need to be added to your website.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function checkStatus(importLogId) {
+    $.ajax({
+        url: '/scraper/sync/import/' + importLogId + '/status/',
+        success: function(response) {
+            if (response.status === 'completed' || response.status === 'failed') {
+                location.reload();
+            } else {
+                alert('Status: ' + response.status + '\nProgress: ' + response.progress + '%');
+            }
+        }
+    });
+}
+</script>
+{% endblock %}

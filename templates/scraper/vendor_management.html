@@ -1,0 +1,162 @@
+{% extends 'components/base.html' %}
+
+{% block main %}
+<nav class="navbar navbar-expand-lg bg-dark border-bottom border-body" data-bs-theme="dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">Website Scraper Dashboard</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item">
+            <a class="nav-link" href="/">
+              <i class="fas fa-home"></i> Dashboard
+            </a>
+          </li>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle active" href="#" role="button" data-bs-toggle="dropdown">
+              <i class="fas fa-sync-alt"></i> Product Sync
+            </a>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="{% url 'scraper:product_sync_dashboard' %}">
+                <i class="fas fa-tachometer-alt"></i> Sync Dashboard
+              </a></li>
+              <li><a class="dropdown-item active" href="{% url 'scraper:vendor_management' %}">
+                <i class="fas fa-cog"></i> Vendor Management
+              </a></li>
+              <li><a class="dropdown-item" href="{% url 'scraper:import_history' %}">
+                <i class="fas fa-history"></i> Import History
+              </a></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+</nav>
+
+<div class="container-fluid mt-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2>Vendor Management</h2>
+            <p class="text-muted">Configure vendor-specific settings for product synchronization</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Vendor Configurations</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>Website</th>
+                                    <th>Status</th>
+                                    <th>Vendor ID</th>
+                                    <th>SKU Prefix</th>
+                                    <th>Markup %</th>
+                                    <th>Category ID</th>
+                                    <th>Products</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for vendor in vendors %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ vendor.website.name }}</strong>
+                                        <br>
+                                        <small class="text-muted">{{ vendor.website.url }}</small>
+                                    </td>
+                                    <td>
+                                        {% if vendor.has_config %}
+                                            {% if vendor.vendor_config.is_active %}
+                                                <span class="badge bg-success">Configured</span>
+                                            {% else %}
+                                                <span class="badge bg-warning text-dark">Inactive</span>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="badge bg-secondary">Not Configured</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if vendor.vendor_config %}
+                                            <span class="badge bg-info text-dark">{{ vendor.vendor_config.vendor_id }}</span>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if vendor.vendor_config and vendor.vendor_config.sku_prefix %}
+                                            <code>{{ vendor.vendor_config.sku_prefix }}</code>
+                                        {% else %}
+                                            <span class="text-muted">None</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if vendor.vendor_config %}
+                                            <strong>{{ vendor.vendor_config.markup_percentage }}%</strong>
+                                        {% else %}
+                                            <span class="text-muted">0%</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if vendor.vendor_config and vendor.vendor_config.default_category_id %}
+                                            <strong>{{ vendor.vendor_config.default_category_id }}</strong>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge rounded-pill bg-primary">{{ vendor.product_count }}</span>
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'scraper:vendor_config_edit' vendor.website.id %}" 
+                                           class="btn btn-sm {% if vendor.has_config %}btn-warning{% else %}btn-primary{% endif %}">
+                                            <i class="fas fa-edit"></i>
+                                            {% if vendor.has_config %}Edit{% else %}Configure{% endif %}
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="8" class="text-center text-muted py-4">
+                                        No vendors found. Please add websites first.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Quick Guide</h5>
+                </div>
+                <div class="card-body">
+                    <h6>Vendor Configuration Fields:</h6>
+                    <ul>
+                        <li><strong>Vendor ID:</strong> The ID used in your website's vendor system</li>
+                        <li><strong>SKU Prefix:</strong> Text added before SKU (e.g., "RLC-" converts "123" to "RLC-123")</li>
+                        <li><strong>Markup %:</strong> Price increase percentage (e.g., 15% markup on $10 = $11.50)</li>
+                        <li><strong>Category ID:</strong> Default category for products from this vendor</li>
+                    </ul>
+                    <a href="{% url 'scraper:product_sync_dashboard' %}" class="btn btn-info">
+                        <i class="fas fa-sync"></i> Go to Product Sync Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

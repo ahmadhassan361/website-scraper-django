@@ -35,11 +35,30 @@ def home(request):
     
     # Get all websites and their current status
     websites = Website.objects.filter(is_active=True)
-    website_statuses = []
+    
+    # Categorize websites into fast (Shopify) and slow (Custom HTML) scrapers
+    # Shopify scrapers use products.json API (fast)
+    # Custom scrapers parse HTML pages (slow)
+    custom_scraper_types = [
+        'meiros', 'ritelite', 'shaijudaica', 'jewisheducationaltoys',
+        'legacyjudaica', 'simchonim', 'kaftorjudaica', 'mefoarjudaica',
+        'ozvehadar', 'craftsandmore', 'zionjudaica'
+    ]
+    
+    fast_websites = []  # Shopify websites
+    slow_websites = []  # Custom HTML scrapers
     
     for website in websites:
         status = get_website_status(website.id)
-        website_statuses.append(status)
+        
+        # Check if it's a custom scraper (slow) or Shopify (fast)
+        scraper_function = website.scraper_function.lower()
+        is_custom = any(scraper_type in scraper_function for scraper_type in custom_scraper_types)
+        
+        if is_custom:
+            slow_websites.append(status)
+        else:
+            fast_websites.append(status)
     
     # Get recent sessions with improved grouping
     all_sessions = ScrapingSession.objects.select_related('website', 'started_by').order_by('-started_at')
@@ -101,7 +120,8 @@ def home(request):
     
     context = {
         'websites': websites,
-        'website_statuses': website_statuses,
+        'fast_websites': fast_websites,  # Shopify-based (fast scrapers)
+        'slow_websites': slow_websites,  # Custom HTML (slow scrapers)
         'session_groups': session_groups,
         'current_export': current_export,
         'latest_export': latest_export,
@@ -272,6 +292,159 @@ def stop_all_scraping(request):
             messages.success(request, f"Bulk stop completed: {'; '.join(results)}")
         else:
             messages.warning(request, "No running scraping sessions found")
+        
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': True, 'results': results})
+        
+        return redirect('home')
+    
+    return redirect('home')
+
+@login_required(login_url='login')
+def start_all_fast_scraping(request):
+    """Start scraping for all fast (Shopify) websites"""
+    if request.method == 'POST':
+        # Define custom scraper types (slow scrapers)
+        custom_scraper_types = [
+            'meiros', 'ritelite', 'shaijudaica', 'jewisheducationaltoys',
+            'legacyjudaica', 'simchonim', 'kaftorjudaica', 'mefoarjudaica',
+            'ozvehadar', 'craftsandmore', 'zionjudaica'
+        ]
+        
+        # Get only fast websites (Shopify - not custom scrapers)
+        websites = Website.objects.filter(is_active=True)
+        fast_websites = [
+            w for w in websites 
+            if not any(scraper_type in w.scraper_function.lower() for scraper_type in custom_scraper_types)
+        ]
+        
+        results = []
+        for website in fast_websites:
+            result = start_scraping_session(website.id, user=request.user)
+            results.append(f"{website.name}: {result['message']}")
+        
+        if results:
+            messages.success(request, f"Started {len(fast_websites)} fast Shopify scrapers: {'; '.join(results)}")
+        else:
+            messages.warning(request, "No fast scraping websites found")
+        
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': True, 'results': results, 'count': len(fast_websites)})
+        
+        return redirect('home')
+    
+    return redirect('home')
+
+@login_required(login_url='login')
+def stop_all_fast_scraping(request):
+    """Stop scraping for all fast (Shopify) websites"""
+    if request.method == 'POST':
+        custom_scraper_types = [
+            'meiros', 'ritelite', 'shaijudaica', 'jewisheducationaltoys',
+            'legacyjudaica', 'simchonim', 'kaftorjudaica', 'mefoarjudaica',
+            'ozvehadar', 'craftsandmore', 'zionjudaica'
+        ]
+        
+        running_states = ScrapingState.objects.filter(is_running=True).select_related('website')
+        fast_running = [
+            state for state in running_states
+            if not any(scraper_type in state.website.scraper_function.lower() for scraper_type in custom_scraper_types)
+        ]
+        
+        results = []
+        for state in fast_running:
+            result = stop_scraping_session(state.website.id)
+            results.append(f"{state.website.name}: {result['message']}")
+        
+        if results:
+            messages.success(request, f"Stopped {len(fast_running)} fast scrapers: {'; '.join(results)}")
+        else:
+            messages.warning(request, "No running fast scraping sessions found")
+        
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': True, 'results': results})
+        
+        return redirect('home')
+    
+    return redirect('home')
+
+@login_required(login_url='login')
+def start_all_slow_scraping(request):
+    """Start scraping for all slow (Custom HTML) websites"""
+    if request.method == 'POST':
+        # Define custom scraper types (slow scrapers)
+        custom_scraper_types = [
+            'meiros', 'ritelite', 'shaijudaica', 'jewisheducationaltoys',
+            'legacyjudaica', 'simchonim', 'kaftorjudaica', 'mefoarjudaica',
+            'ozvehadar', 'craftsandmore', 'zionjudaica'
+        ]
+        
+        # Check if any fast scrapers are running
+        running_states = ScrapingState.objects.filter(is_running=True).select_related('website')
+        fast_running = [
+            state for state in running_states
+            if not any(scraper_type in state.website.scraper_function.lower() for scraper_type in custom_scraper_types)
+        ]
+        
+        if fast_running:
+            # Block slow scrapers from starting
+            running_names = ', '.join([state.website.name for state in fast_running])
+            messages.error(
+                request, 
+                f"Cannot start slow scrapers while fast scrapers are running. "
+                f"Please wait for these to complete: {running_names}"
+            )
+            return redirect('home')
+        
+        # Get only slow websites (custom HTML scrapers)
+        websites = Website.objects.filter(is_active=True)
+        slow_websites = [
+            w for w in websites 
+            if any(scraper_type in w.scraper_function.lower() for scraper_type in custom_scraper_types)
+        ]
+        
+        results = []
+        for website in slow_websites:
+            result = start_scraping_session(website.id, user=request.user)
+            results.append(f"{website.name}: {result['message']}")
+        
+        if results:
+            messages.success(request, f"Started {len(slow_websites)} slow HTML scrapers: {'; '.join(results)}")
+        else:
+            messages.warning(request, "No slow scraping websites found")
+        
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': True, 'results': results, 'count': len(slow_websites)})
+        
+        return redirect('home')
+    
+    return redirect('home')
+
+@login_required(login_url='login')
+def stop_all_slow_scraping(request):
+    """Stop scraping for all slow (Custom HTML) websites"""
+    if request.method == 'POST':
+        custom_scraper_types = [
+            'meiros', 'ritelite', 'shaijudaica', 'jewisheducationaltoys',
+            'legacyjudaica', 'simchonim', 'kaftorjudaica', 'mefoarjudaica',
+            'ozvehadar', 'craftsandmore', 'zionjudaica'
+        ]
+        
+        running_states = ScrapingState.objects.filter(is_running=True).select_related('website')
+        slow_running = [
+            state for state in running_states
+            if any(scraper_type in state.website.scraper_function.lower() for scraper_type in custom_scraper_types)
+        ]
+        
+        results = []
+        for state in slow_running:
+            result = stop_scraping_session(state.website.id)
+            results.append(f"{state.website.name}: {result['message']}")
+        
+        if results:
+            messages.success(request, f"Stopped {len(slow_running)} slow scrapers: {'; '.join(results)}")
+        else:
+            messages.warning(request, "No running slow scraping sessions found")
         
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return JsonResponse({'success': True, 'results': results})

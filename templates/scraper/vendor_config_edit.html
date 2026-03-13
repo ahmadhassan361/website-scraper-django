@@ -1,0 +1,283 @@
+{% extends 'components/base.html' %}
+
+{% block main %}
+<nav class="navbar navbar-expand-lg bg-dark border-bottom border-body" data-bs-theme="dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">Website Scraper Dashboard</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item">
+            <a class="nav-link" href="/">
+              <i class="fas fa-home"></i> Dashboard
+            </a>
+          </li>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle active" href="#" role="button" data-bs-toggle="dropdown">
+              <i class="fas fa-sync-alt"></i> Product Sync
+            </a>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="{% url 'scraper:product_sync_dashboard' %}">
+                <i class="fas fa-tachometer-alt"></i> Sync Dashboard
+              </a></li>
+              <li><a class="dropdown-item active" href="{% url 'scraper:vendor_management' %}">
+                <i class="fas fa-cog"></i> Vendor Management
+              </a></li>
+              <li><a class="dropdown-item" href="{% url 'scraper:import_history' %}">
+                <i class="fas fa-history"></i> Import History
+              </a></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+</nav>
+
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <a href="{% url 'scraper:vendor_management' %}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Vendor Management
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8 offset-lg-2">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        {% if vendor_config %}Edit{% else %}Create{% endif %} Vendor Configuration
+                    </h4>
+                    <small>{{ website.name }}</small>
+                </div>
+                <div class="card-body">
+                    <form id="vendorConfigForm" method="post">
+                        {% csrf_token %}
+                        
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>Website:</strong> {{ website.name }} ({{ website.url }})
+                        </div>
+
+                        <!-- Vendor ID -->
+                        <div class="form-group">
+                            <label for="vendor_id">
+                                Vendor ID <span class="text-danger">*</span>
+                                <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                   title="The numeric ID used in your website's vendor system"></i>
+                            </label>
+                            <input type="number" 
+                                   class="form-control" 
+                                   id="vendor_id" 
+                                   name="vendor_id" 
+                                   value="{{ vendor_config.vendor_id|default:'' }}" 
+                                   required>
+                            <small class="form-text text-muted">
+                                Example: 5 (must match your website's vendor ID)
+                            </small>
+                        </div>
+
+                        <!-- SKU Prefix -->
+                        <div class="form-group">
+                            <label for="sku_prefix">
+                                SKU Prefix
+                                <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                   title="Text added before SKU (e.g., 'RLC-' transforms '123' to 'RLC-123')"></i>
+                            </label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="sku_prefix" 
+                                   name="sku_prefix" 
+                                   value="{{ vendor_config.sku_prefix|default:'' }}" 
+                                   placeholder="e.g., RLC-, IBSLA">
+                            <small class="form-text text-muted">
+                                Leave empty if no prefix needed. Common formats: "RLC-", "IBSLA", "PREFIX"
+                            </small>
+                        </div>
+
+                        <!-- Markup Percentage -->
+                        <div class="form-group">
+                            <label for="markup_percentage">
+                                Markup Percentage
+                                <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                   title="Percentage to increase prices (15 = 15% markup)"></i>
+                            </label>
+                            <div class="input-group">
+                                <input type="number" 
+                                       step="0.01" 
+                                       class="form-control" 
+                                       id="markup_percentage" 
+                                       name="markup_percentage" 
+                                       value="{{ vendor_config.markup_percentage|default:'0.00' }}">
+                                <div class="input-group-append">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <small class="form-text text-muted">
+                                Example: 15 means $10.00 becomes $11.50 (15% increase)
+                            </small>
+                        </div>
+
+                        <!-- Default Category ID -->
+                        <div class="form-group">
+                            <label for="default_category_id">
+                                Default Category ID
+                                <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                   title="Default category for products from this vendor"></i>
+                            </label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="default_category_id" 
+                                   name="default_category_id" 
+                                   value="{{ vendor_config.default_category_id|default:'' }}" 
+                                   placeholder="e.g., 42">
+                            <small class="form-text text-muted">
+                                The category ID from your website. Leave empty if not needed.
+                            </small>
+                        </div>
+
+                        <!-- Default Product Type ID -->
+                        <div class="form-group">
+                            <label for="default_product_type_id">
+                                Default Product Type ID
+                                <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                   title="Product type identifier (usually 3 for physical products)"></i>
+                            </label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="default_product_type_id" 
+                                   name="default_product_type_id" 
+                                   value="{{ vendor_config.default_product_type_id|default:'3' }}">
+                            <small class="form-text text-muted">
+                                Default: 3 (physical product)
+                            </small>
+                        </div>
+
+                        <!-- Track Inventory -->
+                        <div class="form-group">
+                            <div class="custom-control custom-checkbox">
+                                <input type="checkbox" 
+                                       class="custom-control-input" 
+                                       id="track_inventory" 
+                                       name="track_inventory" 
+                                       {% if vendor_config.track_inventory or not vendor_config %}checked{% endif %}>
+                                <label class="custom-control-label" for="track_inventory">
+                                    Track Inventory
+                                    <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                       title="Enable inventory tracking for products from this vendor"></i>
+                                </label>
+                            </div>
+                            <small class="form-text text-muted">
+                                When enabled, your website will track stock levels for these products
+                            </small>
+                        </div>
+
+                        <!-- Sell Out of Stock -->
+                        <div class="form-group">
+                            <div class="custom-control custom-checkbox">
+                                <input type="checkbox" 
+                                       class="custom-control-input" 
+                                       id="sell_out_of_stock" 
+                                       name="sell_out_of_stock" 
+                                       {% if vendor_config.sell_out_of_stock or not vendor_config %}checked{% endif %}>
+                                <label class="custom-control-label" for="sell_out_of_stock">
+                                    Allow Selling When Out of Stock
+                                    <i class="fas fa-question-circle" data-toggle="tooltip" 
+                                       title="Allow customers to purchase even when inventory is 0"></i>
+                                </label>
+                            </div>
+                            <small class="form-text text-muted">
+                                When enabled, products can be purchased even when out of stock
+                            </small>
+                        </div>
+
+                        <hr>
+
+                        <div class="form-group">
+                            <button type="submit" class="btn btn-primary btn-lg btn-block">
+                                <i class="fas fa-save"></i> Save Configuration
+                            </button>
+                            <a href="{% url 'scraper:vendor_management' %}" class="btn btn-secondary btn-block">
+                                Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Preview Card -->
+            <div class="card mt-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Preview: SKU & Price Transformation</h5>
+                </div>
+                <div class="card-body">
+                    <div id="transformPreview">
+                        <p><strong>Original SKU:</strong> <code>123-ABC</code></p>
+                        <p><strong>Transformed SKU:</strong> <code id="previewSKU">-</code></p>
+                        <hr>
+                        <p><strong>Original Price:</strong> $10.00</p>
+                        <p><strong>Transformed Price:</strong> <span id="previewPrice">$10.00</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block javascript %}
+<script>
+$(document).ready(function() {
+    // Enable tooltips
+    $('[data-toggle="tooltip"]').tooltip();
+    
+    // Preview transformation
+    function updatePreview() {
+        var prefix = $('#sku_prefix').val() || '';
+        var markup = parseFloat($('#markup_percentage').val()) || 0;
+        
+        // Update SKU preview
+        var originalSKU = '123-ABC';
+        var transformedSKU = prefix + originalSKU;
+        $('#previewSKU').text(transformedSKU);
+        
+        // Update price preview
+        var originalPrice = 10.00;
+        var transformedPrice = originalPrice * (1 + (markup / 100));
+        $('#previewPrice').text('$' + transformedPrice.toFixed(2));
+    }
+    
+    $('#sku_prefix, #markup_percentage').on('input', updatePreview);
+    updatePreview();
+    
+    // Form submission
+    $('#vendorConfigForm').submit(function(e) {
+        e.preventDefault();
+        
+        var formData = $(this).serialize();
+        
+        $.ajax({
+            url: '',
+            method: 'POST',
+            data: formData,
+            dataType: 'json',
+            success: function(response) {
+                if (response.success) {
+                    alert('✓ Vendor configuration saved successfully!');
+                    window.location.href = '{% url "scraper:vendor_management" %}';
+                } else {
+                    alert('✗ Error: ' + (response.error || 'Unknown error'));
+                }
+            },
+            error: function(xhr) {
+                alert('✗ Error saving configuration. Please try again.');
+                console.error(xhr.responseText);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

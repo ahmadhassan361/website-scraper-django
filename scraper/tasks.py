@@ -3920,6 +3920,37 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
                 body={'type': 'anyone', 'role': 'writer'}
             ).execute()
         
+        # IMPORTANT: Ensure sheet has enough rows (for both new and existing sheets)
+        required_rows = total_products + 100
+        logger.info(f"Ensuring sheet has at least {required_rows} rows...")
+        
+        # Get fresh metadata to check current size
+        sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
+        sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+        current_row_count = sheet_metadata['sheets'][0]['properties']['gridProperties']['rowCount']
+        
+        if current_row_count < required_rows:
+            logger.info(f"Expanding sheet from {current_row_count} to {required_rows} rows...")
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=file_id,
+                body={
+                    "requests": [{
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "gridProperties": {
+                                    "rowCount": required_rows
+                                }
+                            },
+                            "fields": "gridProperties.rowCount"
+                        }
+                    }]
+                }
+            ).execute()
+            logger.info(f"Sheet expanded successfully to {required_rows} rows")
+        else:
+            logger.info(f"Sheet already has {current_row_count} rows, no expansion needed")
+        
         # Prepare and write data in batches to avoid SSL timeout
         logger.info("Preparing and writing product data in batches...")
         processed_count = 0

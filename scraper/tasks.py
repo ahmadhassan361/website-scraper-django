@@ -3898,14 +3898,15 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
                 body={'type': 'anyone', 'role': 'writer'}
             ).execute()
         
-        # Prepare data for batch update
-        logger.info("Preparing product data...")
-        values = []
+        # Prepare and write data in batches to avoid SSL timeout
+        logger.info("Preparing and writing product data in batches...")
         processed_count = 0
-        batch_size = 100
+        batch_size = 500  # Write 500 rows at a time to avoid SSL timeout
+        current_row = 2  # Start from row 2 (after header)
         
         for i in range(0, total_products, batch_size):
             batch_products = products[i:i + batch_size]
+            batch_values = []
             
             for product in batch_products:
                 row = [
@@ -3922,24 +3923,48 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
                     product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '',
                     product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else ''
                 ]
-                values.append(row)
+                batch_values.append(row)
                 processed_count += 1
-                
-                # Update progress every 50 products
-                if processed_count % 50 == 0:
+            
+            # Write this batch to sheet
+            if batch_values:
+                try:
+                    logger.info(f"Writing batch {i//batch_size + 1}: rows {current_row} to {current_row + len(batch_values) - 1}")
+                    sheets_service.spreadsheets().values().update(
+                        spreadsheetId=file_id,
+                        range=f'A{current_row}',
+                        valueInputOption='RAW',
+                        body={'values': batch_values}
+                    ).execute()
+                    current_row += len(batch_values)
+                    
+                    # Update progress
                     progress = 85 + int((processed_count / total_products) * 10)  # 85-95%
                     export_record.processed_products = processed_count
                     export_record.progress_percentage = progress
                     export_record.save()
-        
-        # Update sheet with all data at once
-        logger.info(f"Writing {len(values)} rows to sheet...")
-        sheets_service.spreadsheets().values().update(
-            spreadsheetId=file_id,
-            range='A2',  # Start from row 2 (after headers)
-            valueInputOption='RAW',
-            body={'values': values}
-        ).execute()
+                    
+                    # Small delay between batches to avoid rate limiting
+                    import time
+                    time.sleep(0.5)
+                    
+                except Exception as batch_error:
+                    logger.error(f"Error writing batch starting at row {current_row}: {str(batch_error)}")
+                    # Try one more time with smaller batch
+                    if len(batch_values) > 100:
+                        logger.info("Retrying with smaller sub-batches...")
+                        for sub_i in range(0, len(batch_values), 100):
+                            sub_batch = batch_values[sub_i:sub_i + 100]
+                            sheets_service.spreadsheets().values().update(
+                                spreadsheetId=file_id,
+                                range=f'A{current_row}',
+                                valueInputOption='RAW',
+                                body={'values': sub_batch}
+                            ).execute()
+                            current_row += len(sub_batch)
+                            time.sleep(0.5)
+                    else:
+                        raise batch_error
         
         # Set row height
         logger.info("Formatting sheet...")

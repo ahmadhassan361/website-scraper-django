@@ -24,6 +24,7 @@ class GoogleSheetLinks(models.Model):
     ]
     
     link = models.TextField(null=True, blank=True)                # Google Sheet link
+    sheet_file_id = models.CharField(max_length=255, null=True, blank=True)  # Google Drive file ID for reusing sheet
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     celery_task_id = models.CharField(max_length=255, null=True, blank=True)
     filename = models.CharField(max_length=300, null=True, blank=True)

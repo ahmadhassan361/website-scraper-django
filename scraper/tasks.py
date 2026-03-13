@@ -3753,6 +3753,7 @@ logger = logging.getLogger(__name__)
 def export_products_to_google_sheet(self, export_id, website_filter='all'):
     """
     Export products to Google Sheet in background with progress tracking using OAuth2
+    Updates existing sheet if available, otherwise creates new one
     
     Args:
         export_id: ID of the GoogleSheetLinks record
@@ -3784,16 +3785,16 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         # Get products based on filter
         if website_filter == 'all':
             products = Product.objects.all().order_by('website', 'created_at')
-            filename = f"all_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+            sheet_name = "All Products"
         else:
             website = Website.objects.get(id=website_filter)
             products = Product.objects.filter(website=website.name).order_by('created_at')
-            filename = f"{website.name}_products_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+            sheet_name = f"{website.name} Products"
         
         # Update total products count
         total_products = products.count()
         export_record.total_products = total_products
-        export_record.filename = filename
+        export_record.filename = sheet_name
         export_record.save()
         
         if total_products == 0:
@@ -3802,89 +3803,146 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
             export_record.save()
             return {'status': 'failed', 'message': 'No products found to export'}
         
-        # Create Excel file in memory
-        output = BytesIO()
-        workbook = xlsxwriter.Workbook(output, {'in_memory': True})
-        worksheet = workbook.add_worksheet('Products')
+        # Build Drive and Sheets services using OAuth2
+        drive_service = google_auth_manager.build_drive_service()
+        sheets_service = google_auth_manager.build_sheets_service()
         
-        # Add headers
-        headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Vendor', 'InStock', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At']
-        for col, header in enumerate(headers):
-            worksheet.write(0, col, header)
+        # Check if we have an existing sheet for this filter
+        existing_file_id = None
+        try:
+            # Look for the most recent completed export with the same filter
+            last_export = GoogleSheetLinks.objects.filter(
+                website_filter=website_filter,
+                status='completed',
+                sheet_file_id__isnull=False
+            ).exclude(id=export_id).order_by('-completed_at').first()
+            
+            if last_export and last_export.sheet_file_id:
+                # Verify the file still exists in Google Drive
+                try:
+                    drive_service.files().get(fileId=last_export.sheet_file_id).execute()
+                    existing_file_id = last_export.sheet_file_id
+                    logger.info(f"Found existing sheet to update: {existing_file_id}")
+                except:
+                    logger.info("Previous sheet no longer exists, will create new one")
+                    existing_file_id = None
+        except Exception as e:
+            logger.warning(f"Error checking for existing sheet: {e}")
+            existing_file_id = None
         
-        # Process products in batches
-        batch_size = 100
+        if existing_file_id:
+            # Update existing sheet
+            file_id = existing_file_id
+            logger.info(f"Updating existing Google Sheet: {file_id}")
+            
+            # Update progress to 85%
+            export_record.progress_percentage = 85
+            export_record.save()
+            
+            # Get sheet metadata
+            sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
+            sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+            
+            # Clear existing data (keep header)
+            logger.info("Clearing existing data...")
+            sheets_service.spreadsheets().values().clear(
+                spreadsheetId=file_id,
+                range='A2:Z'  # Clear from row 2 onwards, keep headers
+            ).execute()
+            
+        else:
+            # Create new sheet
+            logger.info("Creating new Google Sheet...")
+            
+            # Create Excel file in memory
+            output = BytesIO()
+            workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+            worksheet = workbook.add_worksheet('Products')
+            
+            # Add headers
+            headers = ['Website', 'Name', 'SKU', 'Price', 'Category', 'Vendor', 'InStock', 'Description', 'Image Link', 'Link', 'Created At', 'Updated At']
+            for col, header in enumerate(headers):
+                worksheet.write(0, col, header)
+            
+            workbook.close()
+            output.seek(0)
+            
+            # Update progress to 85% (uploading)
+            export_record.progress_percentage = 85
+            export_record.save()
+            
+            media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            
+            # Upload to personal Google Drive
+            file_metadata = {
+                'name': sheet_name,
+                'mimeType': 'application/vnd.google-apps.spreadsheet',
+            }
+            
+            uploaded_file = drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+            
+            file_id = uploaded_file.get('id')
+            logger.info(f"New file created: {file_id}")
+            
+            # Get sheet metadata
+            sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
+            sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
+            
+            # Make it public
+            drive_service.permissions().create(
+                fileId=file_id,
+                body={'type': 'anyone', 'role': 'writer'}
+            ).execute()
+        
+        # Prepare data for batch update
+        logger.info("Preparing product data...")
+        values = []
         processed_count = 0
+        batch_size = 100
         
         for i in range(0, total_products, batch_size):
             batch_products = products[i:i + batch_size]
             
-            for row_offset, product in enumerate(batch_products):
-                row = i + row_offset + 1  # +1 for header row
-                
-                worksheet.write(row, 0, product.website or '')
-                worksheet.write(row, 1, product.name or '')
-                worksheet.write(row, 2, product.sku or '')
-                worksheet.write(row, 3, product.price or '')
-                worksheet.write(row, 4, product.category or '')
-                worksheet.write(row, 5, product.vendor or '')
-                worksheet.write(row, 6, "Yes" if product.in_stock else "No")
-                worksheet.write(row, 7, product.description or '')
-                worksheet.write_string(row, 8, ", ".join(product.image_link.split(",")[:2]) if product.image_link else '')
-                worksheet.write(row, 9, product.link or '')
-                worksheet.write(row, 10, product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '')
-                worksheet.write(row, 11, product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else '')
-                
+            for product in batch_products:
+                row = [
+                    product.website or '',
+                    product.name or '',
+                    product.sku or '',
+                    product.price or '',
+                    product.category or '',
+                    product.vendor or '',
+                    "Yes" if product.in_stock else "No",
+                    product.description or '',
+                    ", ".join(product.image_link.split(",")[:2]) if product.image_link else '',
+                    product.link or '',
+                    product.created_at.strftime('%Y-%m-%d %H:%M:%S') if product.created_at else '',
+                    product.updated_at.strftime('%Y-%m-%d %H:%M:%S') if product.updated_at else ''
+                ]
+                values.append(row)
                 processed_count += 1
                 
-                # Update progress every 10 products
-                if processed_count % 10 == 0:
-                    progress = int((processed_count / total_products) * 80)  # 80% for processing data
+                # Update progress every 50 products
+                if processed_count % 50 == 0:
+                    progress = 85 + int((processed_count / total_products) * 10)  # 85-95%
                     export_record.processed_products = processed_count
                     export_record.progress_percentage = progress
                     export_record.save()
         
-        workbook.close()
-        output.seek(0)
-        
-        # Update progress to 80% (data processing complete)
-        export_record.progress_percentage = 80
-        export_record.save()
-        
-        # Update progress to 85% (uploading)
-        export_record.progress_percentage = 85
-        export_record.save()
-        logger.info("Uploading to Google Drive using OAuth2...")
-        
-        # Build Drive and Sheets services using OAuth2
-        drive_service = google_auth_manager.build_drive_service()
-        media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        
-        # Upload to personal Google Drive (no folder restrictions)
-        file_metadata = {
-            'name': filename,
-            'mimeType': 'application/vnd.google-apps.spreadsheet',  # Convert to Google Sheet
-        }
-        
-        uploaded_file = drive_service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id'
+        # Update sheet with all data at once
+        logger.info(f"Writing {len(values)} rows to sheet...")
+        sheets_service.spreadsheets().values().update(
+            spreadsheetId=file_id,
+            range='A2',  # Start from row 2 (after headers)
+            valueInputOption='RAW',
+            body={'values': values}
         ).execute()
         
-        file_id = uploaded_file.get('id')
-        logger.info("File uploaded to personal Google Drive: %s", file_id)
-
-        # Build Sheets API client
-        sheets_service = google_auth_manager.build_sheets_service()
-
-        logger.info("Fetching sheet metadata...")
-        # Get actual sheet ID
-        sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=file_id).execute()
-        sheet_id = sheet_metadata['sheets'][0]['properties']['sheetId']
-        logger.info("Sheet ID fetched: %s", sheet_id)
-
-        logger.info("Setting row height...")
+        # Set row height
+        logger.info("Formatting sheet...")
         sheets_service.spreadsheets().batchUpdate(
             spreadsheetId=file_id,
             body={
@@ -3894,27 +3952,17 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
                             "range": {
                                 "sheetId": sheet_id,
                                 "dimension": "ROWS",
-                                "startIndex": 1,  # Skip header row
+                                "startIndex": 1,
                                 "endIndex": total_products + 2
                             },
                             "properties": {
-                                "pixelSize": 25  # Set row height
+                                "pixelSize": 25
                             },
                             "fields": "pixelSize"
                         }
                     }
                 ]
             }
-        ).execute()
-
-        # Update progress to 95% (making public)
-        export_record.progress_percentage = 95
-        export_record.save()
-        
-        # Make it public (optional - you can remove this if you want files to remain private)
-        drive_service.permissions().create(
-            fileId=file_id,
-            body={'type': 'anyone', 'role': 'writer'}  # Changed to 'reader' for better security
         ).execute()
         
         # Generate public link
@@ -3923,17 +3971,19 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
         # Update export record with completion
         export_record.status = 'completed'
         export_record.link = link
+        export_record.sheet_file_id = file_id  # Store for future reuse
         export_record.progress_percentage = 100
         export_record.completed_at = timezone.now()
         export_record.save()
         
-        logger.info(f"Export completed successfully. File uploaded to personal Google Drive: {link}")
+        action = "updated" if existing_file_id else "created"
+        logger.info(f"Export completed successfully. Sheet {action}: {link}")
         
         return {
             'status': 'completed',
             'link': link,
             'total_products': total_products,
-            'message': f'Successfully exported {total_products} products to Google Sheet in your personal Drive'
+            'message': f'Successfully {action} Google Sheet with {total_products} products'
         }
         
     except Exception as e:

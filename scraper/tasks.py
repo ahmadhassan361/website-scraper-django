@@ -2694,6 +2694,7 @@ def extract_craftsandmore_product_info(soup, product_url, website_name):
         # SKU
         sku_span = soup.find("span", class_="sku_wrapper")
         sku = sku_span.get_text(strip=True) if sku_span else None
+        sku = sku.replace('Item# ', '').strip()
 
         
 

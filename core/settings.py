@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.humanize',
+    'rest_framework',
     'django_celery_beat',
     'django_celery_results',
     'dashboard',
@@ -154,3 +155,34 @@ CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'  # Redis result backend
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TIME_ZONE = 'UTC'
+
+# Django REST Framework Configuration
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 1000,
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'scraper.authentication.StaticTokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',   # Anonymous users: 100 requests per hour
+        'user': '10000/hour'  # Authenticated users: 10000 requests per hour
+    }
+}
+
+# API Static Token (Change this in production!)
+# You can also set this in .env file as API_AUTH_TOKEN
+API_AUTH_TOKEN = os.environ.get('API_AUTH_TOKEN', 'your-secret-api-token-here-change-in-production')

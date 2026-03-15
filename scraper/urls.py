@@ -1,10 +1,20 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from . import views
 from . import sync_views
+from . import api_views
 
 app_name = 'scraper'
 
+# API Router for REST endpoints
+api_router = DefaultRouter()
+api_router.register(r'products', api_views.ProductExportViewSet, basename='product-api')
+api_router.register(r'bulk-export', api_views.ProductBulkExportViewSet, basename='bulk-export')
+
 urlpatterns = [
+    # API URLs
+    path('api/', include(api_router.urls)),
+    
     # Google OAuth2 URLs
     path('google/authorize/', views.google_oauth2_authorize, name='google_oauth2_authorize'),
     path('google/callback/', views.google_oauth2_callback, name='google_oauth2_callback'),

@@ -57,7 +57,6 @@ class Product(models.Model):
     image_link = models.TextField(null=True, blank=True)                # image_link
     created_at = models.DateTimeField(auto_now_add=True)                # created_at
     updated_at = models.DateTimeField(auto_now=True)                    # updated_at
-    
     # class Meta:
         # Ensure unique products per website based on SKU or link
         # unique_together = [['website', 'sku'], ['website', 'link']]
@@ -268,6 +267,8 @@ class ProductSyncStatus(models.Model):
     # User selection
     selected_for_export = models.BooleanField(default=False,
                                              help_text="Selected by user for next export")
+    is_disabled = models.BooleanField(default=False,
+                                             help_text="disable for never sync")
     
     # Custom overrides (optional - override vendor defaults)
     custom_category_id = models.CharField(max_length=100, blank=True, default='',

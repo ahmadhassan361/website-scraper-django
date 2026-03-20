@@ -279,8 +279,13 @@ class ProductSyncStatus(models.Model):
                                                  help_text="Override default inventory tracking")
     custom_sell_out_of_stock = models.BooleanField(null=True, blank=True,
                                                    help_text="Override default out of stock selling")
-    
+    disabled_reason = models.TextField(
+                blank=True,
+                default='',
+                help_text='Optional reason for disabling this product'
+            )
     # Metadata
+    disabled_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -344,7 +349,11 @@ class WebsiteImportLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
-    
+    unmatched_products = models.JSONField(
+                default=list,
+                blank=True,
+                help_text='List of products from import file that could not be matched in database'
+            )
     class Meta:
         verbose_name = "Website Import Log"
         verbose_name_plural = "Website Import Logs"

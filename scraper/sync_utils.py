@@ -14,57 +14,105 @@ class SKUMatcher:
     """Smart SKU matching between database and website products"""
     
     @staticmethod
-    def extract_vendor_prefix(sku: str) -> Tuple[str, str]:
+    def normalize_sku(sku: str) -> str:
         """
-        Extract vendor prefix from SKU
-        Returns: (prefix, original_sku)
+        Normalize SKU for comparison
+        - Convert to uppercase
+        - Remove/standardize special characters
+        - Trim whitespace
         
         Examples:
-            "RLC-22-N" -> ("RLC-", "22-N")
-            "IBSLA123" -> ("IBSLA", "123")
-            "C751" -> ("", "C751")
+            "kwpp-7" -> "KWPP7"
+            "RLC/22-N" -> "RLC22N"
+            " CBGL-2 " -> "CBGL2"
         """
         if not sku:
-            return '', ''
+            return ''
         
-        # Common patterns for vendor prefixes
-        patterns = [
-            r'^([A-Z]{2,6}-)(.+)$',  # RLC-, IBSLA-, etc. with dash
-            r'^([A-Z]{2,6})(.+)$',   # IBSLA, IBSC, etc. without dash
-        ]
+        # Convert to uppercase and strip
+        normalized = sku.upper().strip()
         
-        for pattern in patterns:
-            match = re.match(pattern, sku)
-            if match:
-                return match.group(1), match.group(2)
+        # Remove common special characters but keep alphanumeric
+        # This makes "RLC-22-N" and "RLC22N" match
+        normalized = re.sub(r'[-_/\s]+', '', normalized)
         
-        return '', sku
+        return normalized
     
     @staticmethod
-    def find_vendor_by_prefix(prefix: str) -> Optional[VendorConfiguration]:
-        """Find vendor configuration by SKU prefix"""
-        if not prefix:
-            return None
+    def extract_vendor_prefix(sku: str) -> List[Tuple[str, str]]:
+        """
+        Extract possible vendor prefixes from SKU
+        Returns list of (prefix, base_sku) tuples for multiple attempts
         
-        try:
-            # Try exact match first
-            return VendorConfiguration.objects.get(sku_prefix=prefix, is_active=True)
-        except VendorConfiguration.DoesNotExist:
-            # Try case-insensitive match
-            return VendorConfiguration.objects.filter(
-                sku_prefix__iexact=prefix,
-                is_active=True
-            ).first()
+        Examples:
+            "RLKWPP-7" -> [("RL", "KWPP7"), ("RLC", "WPP7"), ("RLKW", "PP7"), ...]
+            "NMNM30113" -> [("NM", "NM30113"), ("NMNM", "30113"), ...]
+        """
+        if not sku:
+            return [('', '')]
+        
+        normalized = SKUMatcher.normalize_sku(sku)
+        results = []
+        
+        # Try different prefix lengths (2 to 6 characters)
+        for prefix_len in [2, 3, 4, 5, 6]:
+            if len(normalized) > prefix_len:
+                prefix = normalized[:prefix_len]
+                base = normalized[prefix_len:]
+                if base:  # Only add if base is not empty
+                    results.append((prefix, base))
+        
+        # Also add the full SKU with no prefix
+        results.append(('', normalized))
+        
+        return results
+    
+    @staticmethod
+    def find_vendor_configs_by_sku(sku: str) -> List[VendorConfiguration]:
+        """
+        Find all possible vendor configurations that might match this SKU
+        """
+        if not sku:
+            return []
+        
+        possible_prefixes = SKUMatcher.extract_vendor_prefix(sku)
+        vendor_configs = []
+        
+        for prefix, _ in possible_prefixes:
+            if prefix:
+                # Normalize the prefix for comparison
+                normalized_prefix = prefix
+                
+                # Try to find vendor configs with this prefix
+                configs = VendorConfiguration.objects.filter(
+                    is_active=True
+                ).filter(
+                    Q(sku_prefix__iexact=prefix) |
+                    Q(sku_prefix__iexact=prefix + '-') |
+                    Q(sku_prefix__iexact=prefix + '_')
+                )
+                
+                vendor_configs.extend(configs)
+        
+        # Remove duplicates
+        seen = set()
+        unique_configs = []
+        for config in vendor_configs:
+            if config.id not in seen:
+                seen.add(config.id)
+                unique_configs.append(config)
+        
+        return unique_configs
     
     @staticmethod
     def match_product_by_sku(website_sku: str, website_product_id: str = '', vendor_website: str = None) -> Optional[Product]:
         """
-        Match a product from website export to database product (vendor-specific)
+        Match a product from website export to database product
         
         Args:
-            website_sku: SKU as it appears on website (may have prefix)
-            website_product_id: Product ID from website
-            vendor_website: Limit matching to this vendor only
+            website_sku: SKU as it appears on website (may have vendor prefix)
+            website_product_id: Product ID from website (not used for matching currently)
+            vendor_website: Vendor/website name to match against (REQUIRED for proper matching)
             
         Returns:
             Matched Product object or None
@@ -72,51 +120,185 @@ class SKUMatcher:
         if not website_sku:
             return None
         
-        # Step 1: Extract prefix and original SKU
-        prefix, original_sku = SKUMatcher.extract_vendor_prefix(website_sku)
+        # Normalize the website SKU
+        normalized_website_sku = SKUMatcher.normalize_sku(website_sku)
         
-        # Step 2: If vendor_website is specified, only match products from that vendor
+        # PRIMARY STRATEGY: If vendor_website is specified (which it should be during import)
+        # This is the main path and should handle 99% of cases
         if vendor_website:
-            # Try exact match with vendor filter
-            product = Product.objects.filter(
-                website__iexact=vendor_website,
-                sku__iexact=original_sku
-            ).first()
-            
+            product = SKUMatcher._match_with_vendor_filter(
+                website_sku, normalized_website_sku, vendor_website
+            )
             if product:
                 return product
-            
-            # Try with original website SKU (no prefix removal)
-            product = Product.objects.filter(
-                website__iexact=vendor_website,
-                sku__iexact=website_sku
-            ).first()
-            
+        
+        # FALLBACK: Only use these if vendor_website is not specified (shouldn't happen)
+        # Try direct SKU matching across all products
+        product = SKUMatcher._match_direct_sku(
+            website_sku, normalized_website_sku
+        )
+        if product:
             return product
         
-        # Step 3: Original logic (when no vendor specified) - Find vendor configuration
-        vendor_config = SKUMatcher.find_vendor_by_prefix(prefix)
+        return None
+    
+    @staticmethod
+    def _match_with_vendor_filter(website_sku: str, normalized_sku: str, vendor_website: str) -> Optional[Product]:
+        """
+        Match within a specific vendor's products
         
-        if vendor_config:
-            # Match by website name and original SKU
-            website_name = vendor_config.website.name
-            
-            # Try exact match
-            product = Product.objects.filter(
-                website__iexact=website_name,
-                sku__iexact=original_sku
-            ).first()
-            
-            if product:
-                return product
+        Strategy:
+        1. Try exact match with original SKU (case-insensitive)
+        2. If vendor has prefix, remove it and try matching
+        3. As fallback, try normalized matching (for edge cases)
+        """
         
-        # Step 4: Fallback - try direct SKU match (no prefix removal)
+        # Get vendor configuration
+        try:
+            website_obj = Website.objects.get(name__iexact=vendor_website, is_active=True)
+            vendor_config = VendorConfiguration.objects.get(website=website_obj, is_active=True)
+        except (Website.DoesNotExist, VendorConfiguration.DoesNotExist):
+            vendor_config = None
+        
+        # LEVEL 1: Try exact match with original SKU (case-insensitive, keeps special chars)
         product = Product.objects.filter(
-            Q(sku__iexact=website_sku) |
-            Q(sku__iexact=original_sku)
+            website__iexact=vendor_website,
+            sku__iexact=website_sku
         ).first()
         
-        return product
+        if product:
+            return product
+        
+        # LEVEL 2: If vendor has prefix, try removing it (preserve special chars)
+        if vendor_config and vendor_config.sku_prefix:
+            # Remove prefix (case-insensitive)
+            if website_sku.upper().startswith(vendor_config.sku_prefix.upper()):
+                # Remove prefix keeping original case and special chars
+                base_sku = website_sku[len(vendor_config.sku_prefix):]
+                
+                # Try matching base SKU
+                product = Product.objects.filter(
+                    website__iexact=vendor_website,
+                    sku__iexact=base_sku
+                ).first()
+                
+                if product:
+                    return product
+        
+        # LEVEL 3: Fallback - normalized matching (for edge cases with inconsistent formatting)
+        # This handles cases where special chars might differ
+        for product in Product.objects.filter(website__iexact=vendor_website):
+            product_sku_normalized = SKUMatcher.normalize_sku(product.sku or '')
+            
+            # Try with full website SKU normalized
+            if product_sku_normalized == normalized_sku:
+                return product
+            
+            # Try with prefix removed and normalized
+            if vendor_config and vendor_config.sku_prefix:
+                prefix_normalized = SKUMatcher.normalize_sku(vendor_config.sku_prefix)
+                if normalized_sku.startswith(prefix_normalized):
+                    base_normalized = normalized_sku[len(prefix_normalized):]
+                    if product_sku_normalized == base_normalized:
+                        return product
+        
+        return None
+    
+    @staticmethod
+    def _match_with_vendor_prefix(website_sku: str, normalized_sku: str) -> Optional[Product]:
+        """Match by detecting vendor prefix"""
+        
+        # Get possible vendor configurations
+        vendor_configs = SKUMatcher.find_vendor_configs_by_sku(website_sku)
+        
+        for vendor_config in vendor_configs:
+            website_name = vendor_config.website.name
+            prefix_normalized = SKUMatcher.normalize_sku(vendor_config.sku_prefix)
+            
+            # Try to extract base SKU
+            if normalized_sku.startswith(prefix_normalized):
+                base_sku = normalized_sku[len(prefix_normalized):]
+                
+                # Try matching with base SKU
+                products = Product.objects.filter(
+                    website__iexact=website_name
+                )
+                
+                for product in products:
+                    product_sku_normalized = SKUMatcher.normalize_sku(product.sku or '')
+                    if product_sku_normalized == base_sku:
+                        return product
+                    # Also try if product SKU matches the full SKU
+                    if product_sku_normalized == normalized_sku:
+                        return product
+        
+        return None
+    
+    @staticmethod
+    def _match_direct_sku(website_sku: str, normalized_sku: str) -> Optional[Product]:
+        """Direct SKU matching without prefix logic"""
+        
+        # Try exact match (case-insensitive)
+        product = Product.objects.filter(sku__iexact=website_sku).first()
+        if product:
+            return product
+        
+        # Try normalized match
+        for product in Product.objects.all():
+            if SKUMatcher.normalize_sku(product.sku or '') == normalized_sku:
+                return product
+        
+        return None
+    
+    @staticmethod
+    def _match_partial_sku(website_sku: str, normalized_sku: str) -> Optional[Product]:
+        """Partial/fuzzy matching as last resort"""
+        
+        # Try contains match (be careful with this - only use for longer SKUs)
+        if len(normalized_sku) >= 6:
+            products = Product.objects.filter(
+                Q(sku__icontains=website_sku) |
+                Q(sku__icontains=normalized_sku)
+            )
+            
+            # Return the closest match
+            for product in products:
+                product_normalized = SKUMatcher.normalize_sku(product.sku or '')
+                # Check if it's a close match (at least 80% similar)
+                if product_normalized == normalized_sku:
+                    return product
+                if normalized_sku in product_normalized or product_normalized in normalized_sku:
+                    return product
+        
+        return None
+    
+    @staticmethod
+    def find_all_matching_products(website_sku: str) -> List[Product]:
+        """
+        Find ALL products that match a SKU (to detect duplicates)
+        Returns list of all matching products
+        """
+        if not website_sku:
+            return []
+        
+        normalized_sku = SKUMatcher.normalize_sku(website_sku)
+        matches = []
+        seen_ids = set()
+        
+        # Get all possible matches
+        for product in Product.objects.all():
+            product_normalized = SKUMatcher.normalize_sku(product.sku or '')
+            
+            if product_normalized == normalized_sku:
+                if product.id not in seen_ids:
+                    matches.append(product)
+                    seen_ids.add(product.id)
+            elif product.sku and product.sku.upper() == website_sku.upper():
+                if product.id not in seen_ids:
+                    matches.append(product)
+                    seen_ids.add(product.id)
+        
+        return matches
     
     @staticmethod
     def fuzzy_match_by_name(product_name: str, website_name: str = None) -> Optional[Product]:

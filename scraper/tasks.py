@@ -457,12 +457,14 @@ def import_website_products_task(self, import_log_id, file_path, vendor_website=
         processed_count = 0
         skipped_count = 0
         website_skus = set()
+        unmatched_products = []  # Track products that couldn't be matched
         
         # Process each row from CSV
         for idx, csv_row in enumerate(website_products):
             try:
                 website_sku = csv_row['sku']
                 website_product_id = csv_row['id']
+                product_name = csv_row['name']
                 
                 if not website_sku:
                     skipped_count += 1
@@ -493,6 +495,13 @@ def import_website_products_task(self, import_log_id, file_path, vendor_website=
                     
                     matched_count += 1
                 else:
+                    # Track unmatched product
+                    unmatched_products.append({
+                        'sku': website_sku,
+                        'name': product_name,
+                        'id': website_product_id,
+                        'row': idx + 2  # +2 because CSV has header row and is 1-indexed
+                    })
                     skipped_count += 1
                 
                 processed_count += 1
@@ -526,8 +535,15 @@ def import_website_products_task(self, import_log_id, file_path, vendor_website=
         for vendor_config in vendor_configs:
             website = vendor_config.website
             
-            # Get all products for this website
+            # Get all products for this website (excluding disabled ones)
             website_products_qs = Product.objects.filter(website__iexact=website.name)
+            
+            # Exclude disabled products from sync status
+            disabled_product_ids = ProductSyncStatus.objects.filter(
+                is_disabled=True
+            ).values_list('product_id', flat=True)
+            
+            website_products_qs = website_products_qs.exclude(id__in=disabled_product_ids)
             
             for product in website_products_qs:
                 # Transform SKU to website format
@@ -554,12 +570,13 @@ def import_website_products_task(self, import_log_id, file_path, vendor_website=
                     if not sync_status.on_website:
                         new_products_count += 1
         
-        # Complete import
+        # Complete import and save unmatched products list
         import_log.status = 'completed'
         import_log.processed_rows = processed_count
         import_log.matched_products = matched_count
         import_log.new_products_found = new_products_count
         import_log.skipped_rows = skipped_count
+        import_log.unmatched_products = unmatched_products  # Save the list of unmatched products
         import_log.progress_percentage = 100
         import_log.completed_at = timezone.now()
         import_log.save()
@@ -3962,10 +3979,20 @@ def export_products_to_google_sheet(self, export_id, website_filter='all'):
             batch_values = []
             
             for product in batch_products:
+                # Get SKU with vendor prefix
+                sku_value = product.sku or ''
+                try:
+                    from .models import Website, VendorConfiguration
+                    website_obj = Website.objects.get(name__iexact=product.website)
+                    vendor_config = VendorConfiguration.objects.get(website=website_obj, is_active=True)
+                    sku_value = vendor_config.apply_sku_transform(product.sku or '')
+                except (Website.DoesNotExist, VendorConfiguration.DoesNotExist):
+                    sku_value = product.sku or ''
+                
                 row = [
                     product.website or '',
                     product.name or '',
-                    product.sku or '',
+                    sku_value,  # SKU with vendor prefix included
                     product.price or '',
                     product.category or '',
                     product.vendor or '',

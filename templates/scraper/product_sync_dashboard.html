@@ -445,16 +445,23 @@ function checkImportStatus(importLogId) {
                     clearInterval(interval);
                     $('#importStatus').text('Import completed!');
                     
-                    var message = 'Import completed for ' + selectedVendor + '!\n\n';
-                    message += 'Total rows in CSV: ' + response.total_rows + '\n';
-                    message += 'Products matched (on website): ' + response.matched_products + '\n';
-                    message += 'New products (not on website): ' + response.new_products_found + '\n';
-                    message += 'Skipped rows: ' + response.skipped_rows;
+                    // Show unmatched products if any
+                    var unmatchedProducts = response.unmatched_products || [];
                     
-                    alert(message);
-                    
-                    // Redirect to show new products for this vendor
-                    window.location.href = '/scraper/sync/?website=' + selectedVendor + '&status=new&q=';
+                    if (unmatchedProducts.length > 0) {
+                        showUnmatchedProductsModal(unmatchedProducts, response, selectedVendor);
+                    } else {
+                        var message = 'Import completed for ' + selectedVendor + '!\n\n';
+                        message += 'Total rows in CSV: ' + response.total_rows + '\n';
+                        message += 'Products matched (on website): ' + response.matched_products + '\n';
+                        message += 'New products (not on website): ' + response.new_products_found + '\n';
+                        message += 'Skipped rows: ' + response.skipped_rows;
+                        
+                        alert(message);
+                        
+                        // Redirect to show new products for this vendor
+                        window.location.href = '/scraper/sync/?website=' + selectedVendor + '&status=new&q=';
+                    }
                 } else if (response.status === 'failed') {
                     clearInterval(interval);
                     alert('Import failed: ' + response.error_message);
@@ -462,6 +469,129 @@ function checkImportStatus(importLogId) {
             }
         });
     }, 1000);
+}
+
+// Show unmatched products modal
+function showUnmatchedProductsModal(unmatchedProducts, response, selectedVendor) {
+    var modalHtml = `
+        <div class="modal fade" id="unmatchedModal" tabindex="-1" data-bs-backdrop="static">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title">
+                            <i class="fas fa-exclamation-triangle"></i> Import Results - ${unmatchedProducts.length} Unmatched Product(s)
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <h6>Import Summary for ${selectedVendor}:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Total rows in CSV:</strong> ${response.total_rows}</li>
+                                <li><strong>Products matched:</strong> <span class="text-success">${response.matched_products}</span></li>
+                                <li><strong>Products not matched:</strong> <span class="text-danger">${unmatchedProducts.length}</span></li>
+                                <li><strong>New products (in DB not on website):</strong> ${response.new_products_found}</li>
+                            </ul>
+                        </div>
+                        
+                        <h6>Unmatched Products from Import File:</h6>
+                        <p class="text-muted small">These products are in your import file but could not be found in the database.</p>
+                        
+                        <div class="mb-3">
+                            <button class="btn btn-sm btn-primary" onclick="copyUnmatchedToClipboard()">
+                                <i class="fas fa-copy"></i> Copy All SKUs
+                            </button>
+                            <button class="btn btn-sm btn-secondary" onclick="copyUnmatchedDetailsToClipboard()">
+                                <i class="fas fa-list"></i> Copy Full Details
+                            </button>
+                        </div>
+                        
+                        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                            <table class="table table-sm table-bordered">
+                                <thead class="sticky-top bg-light">
+                                    <tr>
+                                        <th>Row #</th>
+                                        <th>SKU</th>
+                                        <th>Product Name</th>
+                                        <th>Website ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="unmatchedTableBody">
+                                    ${unmatchedProducts.map(p => `
+                                        <tr>
+                                            <td>${p.row}</td>
+                                            <td><code>${p.sku}</code></td>
+                                            <td>${p.name}</td>
+                                            <td>${p.id}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <textarea id="unmatchedData" style="position: absolute; left: -9999px;">
+                            ${unmatchedProducts.map(p => p.sku).join('\n')}
+                        </textarea>
+                        <textarea id="unmatchedDetailsData" style="position: absolute; left: -9999px;">
+                            ${unmatchedProducts.map(p => `Row ${p.row}: ${p.sku} - ${p.name} (ID: ${p.id})`).join('\n')}
+                        </textarea>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="button" class="btn btn-primary" onclick="proceedToNewProducts('${selectedVendor}')">
+                            View New Products →
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    $('#unmatchedModal').remove();
+    
+    // Add modal to body
+    $('body').append(modalHtml);
+    
+    // Close import modal and show unmatched modal
+    $('#importModal').modal('hide');
+    
+    // Use Bootstrap 5 syntax
+    var unmatchedModal = new bootstrap.Modal(document.getElementById('unmatchedModal'));
+    unmatchedModal.show();
+}
+
+// Copy unmatched SKUs to clipboard
+function copyUnmatchedToClipboard() {
+    var copyText = document.getElementById("unmatchedData");
+    copyText.select();
+    copyText.setSelectionRange(0, 99999); // For mobile
+    
+    navigator.clipboard.writeText(copyText.value).then(function() {
+        alert('SKUs copied to clipboard!');
+    }).catch(function() {
+        document.execCommand("copy");
+        alert('SKUs copied to clipboard!');
+    });
+}
+
+// Copy unmatched details to clipboard
+function copyUnmatchedDetailsToClipboard() {
+    var copyText = document.getElementById("unmatchedDetailsData");
+    copyText.select();
+    copyText.setSelectionRange(0, 99999);
+    
+    navigator.clipboard.writeText(copyText.value).then(function() {
+        alert('Product details copied to clipboard!');
+    }).catch(function() {
+        document.execCommand("copy");
+        alert('Product details copied to clipboard!');
+    });
+}
+
+// Proceed to view new products
+function proceedToNewProducts(vendor) {
+    window.location.href = '/scraper/sync/?website=' + vendor + '&status=new&q=';
 }
 </script>
 {% endblock %}

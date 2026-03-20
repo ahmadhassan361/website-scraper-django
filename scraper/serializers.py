@@ -13,6 +13,7 @@ class ProductExportSerializer(serializers.ModelSerializer):
     in_stock_display = serializers.SerializerMethodField()
     created_at_formatted = serializers.SerializerMethodField()
     updated_at_formatted = serializers.SerializerMethodField()
+    sku = serializers.SerializerMethodField()
     
     class Meta:
         model = Product
@@ -35,6 +36,17 @@ class ProductExportSerializer(serializers.ModelSerializer):
             'updated_at',
             'updated_at_formatted',
         ]
+    
+    def get_sku(self, obj):
+        """Return SKU with vendor prefix if vendor configuration exists"""
+        from .models import Website, VendorConfiguration
+        
+        try:
+            website = Website.objects.get(name__iexact=obj.website)
+            vendor_config = VendorConfiguration.objects.get(website=website, is_active=True)
+            return vendor_config.apply_sku_transform(obj.sku or '')
+        except (Website.DoesNotExist, VendorConfiguration.DoesNotExist):
+            return obj.sku or ''
     
     def get_in_stock_display(self, obj):
         """Return 'Yes' or 'No' for in_stock field"""

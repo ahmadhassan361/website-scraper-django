@@ -142,23 +142,40 @@ def product_sync_dashboard(request):
     
     # Apply status filter
     if status_filter == 'new':
-        # Products not on website
+        # Products not on website (excluding disabled)
         synced_product_ids = ProductSyncStatus.objects.filter(
             on_website=True
         ).values_list('product_id', flat=True)
-        products = products.exclude(id__in=synced_product_ids)
+        disabled_product_ids = ProductSyncStatus.objects.filter(
+            is_disabled=True
+        ).values_list('product_id', flat=True)
+        products = products.exclude(id__in=synced_product_ids).exclude(id__in=disabled_product_ids)
     elif status_filter == 'synced':
-        # Products on website
+        # Products on website (excluding disabled)
         synced_product_ids = ProductSyncStatus.objects.filter(
-            on_website=True
+            on_website=True,
+            is_disabled=False
         ).values_list('product_id', flat=True)
         products = products.filter(id__in=synced_product_ids)
     elif status_filter == 'selected':
-        # Products selected for export
+        # Products selected for export (excluding disabled)
         selected_product_ids = ProductSyncStatus.objects.filter(
-            selected_for_export=True
+            selected_for_export=True,
+            is_disabled=False
         ).values_list('product_id', flat=True)
         products = products.filter(id__in=selected_product_ids)
+    elif status_filter == 'disabled':
+        # Disabled products only
+        disabled_product_ids = ProductSyncStatus.objects.filter(
+            is_disabled=True
+        ).values_list('product_id', flat=True)
+        products = products.filter(id__in=disabled_product_ids)
+    else:
+        # 'all' - exclude disabled products from normal view
+        disabled_product_ids = ProductSyncStatus.objects.filter(
+            is_disabled=True
+        ).values_list('product_id', flat=True)
+        products = products.exclude(id__in=disabled_product_ids)
     
     # Apply search
     if search_query:
@@ -353,6 +370,7 @@ def import_status(request, import_log_id):
             'new_products_found': import_log.new_products_found,
             'skipped_rows': import_log.skipped_rows,
             'error_message': import_log.error_message,
+            'unmatched_products': import_log.unmatched_products if hasattr(import_log, 'unmatched_products') else [],
         })
     except WebsiteImportLog.DoesNotExist:
         return JsonResponse({
@@ -445,6 +463,70 @@ def download_export(request, filename):
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     
     return response
+
+
+@login_required
+@require_http_methods(["POST"])
+def disable_product(request, product_id):
+    """
+    Disable a product (exclude from matching/export/normal display)
+    """
+    try:
+        product = Product.objects.get(id=product_id)
+        
+        # Get or create sync status
+        sync_status, created = ProductSyncStatus.objects.get_or_create(
+            product=product,
+            defaults={'status': 'new'}
+        )
+        
+        # Disable the product
+        sync_status.is_disabled = True
+        sync_status.disabled_at = timezone.now()
+        sync_status.disabled_reason = request.POST.get('reason', '')
+        sync_status.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Product disabled successfully'
+        })
+    except Product.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Product not found'
+        }, status=404)
+
+
+@login_required
+@require_http_methods(["POST"])
+def enable_product(request, product_id):
+    """
+    Re-enable a disabled product
+    """
+    try:
+        product = Product.objects.get(id=product_id)
+        
+        try:
+            sync_status = ProductSyncStatus.objects.get(product=product)
+            sync_status.is_disabled = False
+            sync_status.disabled_at = None
+            sync_status.disabled_reason = ''
+            sync_status.save()
+            
+            return JsonResponse({
+                'success': True,
+                'message': 'Product enabled successfully'
+            })
+        except ProductSyncStatus.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Product sync status not found'
+            }, status=404)
+    except Product.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Product not found'
+        }, status=404)
 
 
 @login_required

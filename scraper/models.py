@@ -349,11 +349,11 @@ class WebsiteImportLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
-    # unmatched_products = models.JSONField(
-    #             default=list,
-    #             blank=True,
-    #             help_text='List of products from import file that could not be matched in database'
-    #         )
+    unmatched_products = models.JSONField(
+                default=list,
+                blank=True,
+                help_text='List of products from import file that could not be matched in database'
+            )
     class Meta:
         verbose_name = "Website Import Log"
         verbose_name_plural = "Website Import Logs"

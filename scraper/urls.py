@@ -34,4 +34,6 @@ urlpatterns = [
     path('sync/export/<str:task_id>/status/', sync_views.export_status, name='export_status'),
     path('sync/download/<str:filename>/', sync_views.download_export, name='download_export'),
     path('sync/import-history/', sync_views.import_history, name='import_history'),
+    path('sync/disable/<int:product_id>/', sync_views.disable_product, name='disable_product'),
+    path('sync/enable/<int:product_id>/', sync_views.enable_product, name='enable_product'),
 ]

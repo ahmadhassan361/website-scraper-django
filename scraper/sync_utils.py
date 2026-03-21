@@ -369,7 +369,7 @@ class CSVParser:
         headers = [
             'SKU', 'Title', 'Categories', 'List Price', 'Length', 'Height', 
             'Width', 'Weight', 'Description', 'Short Desc', 'Product Type Id',
-            'Sell Out of stock', 'Track Inventory', 'Vendor id', 'Release Date', 'Media'
+            'Sell Out of stock', 'Track Inventory', 'Vendor id', 'Release Date', 'Media', 'Visibility'
         ]
         
         count = 0
@@ -464,6 +464,7 @@ class ProductTransformer:
                 'Vendor id': str(vendor_config.vendor_id),
                 'Release Date': '',  # Not available
                 'Media': product.image_link or '',
+                'Visibility': 'TRUE'
             }
             
             return row

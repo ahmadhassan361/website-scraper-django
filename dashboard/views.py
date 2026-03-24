@@ -6,12 +6,14 @@ from django.contrib import messages
 from .forms import BootstrapAuthenticationForm
 from scraper.models import Website, ScrapingSession, ScrapingState, ScrapingLog, Product, GoogleSheetLinks
 from scraper.utils import (
-    start_scraping_session, 
-    stop_scraping_session, 
-    resume_scraping_session, 
+    start_scraping_session,
+    stop_scraping_session,
+    resume_scraping_session,
     get_website_status,
     get_session_logs,
-    initialize_websites
+    initialize_websites,
+    force_stop_all_scraping,
+    recover_stuck_sessions,
 )
 import json
 import csv
@@ -279,26 +281,100 @@ def start_all_scraping(request):
 
 @login_required(login_url='login')
 def stop_all_scraping(request):
-    """Stop scraping for all running websites"""
+    """
+    Force-stop ALL running/pending scraping sessions across every website.
+
+    Uses force_stop_all_scraping() which:
+    - Iterates the DB directly (not just ScrapingState.is_running) to catch orphans
+    - Revokes each Celery task (swallows revoke errors for already-dead tasks)
+    - Bulk-resets all ScrapingState records to idle
+    """
     if request.method == 'POST':
-        running_states = ScrapingState.objects.filter(is_running=True)
-        results = []
-        
-        for state in running_states:
-            result = stop_scraping_session(state.website.id)
-            results.append(f"{state.website.name}: {result['message']}")
-        
-        if results:
-            messages.success(request, f"Bulk stop completed: {'; '.join(results)}")
+        result = force_stop_all_scraping()
+
+        if result['total_stopped'] > 0:
+            messages.success(
+                request,
+                f"Force-stopped {result['total_stopped']} scraping session(s): "
+                + '; '.join(result['stopped'])
+            )
         else:
-            messages.warning(request, "No running scraping sessions found")
-        
+            messages.warning(request, "No active scraping sessions found — all states reset to idle.")
+
+        if result['errors']:
+            messages.error(request, "Some errors occurred: " + '; '.join(result['errors']))
+
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return JsonResponse({'success': True, 'results': results})
-        
+            return JsonResponse({'success': True, **result})
+
         return redirect('home')
-    
+
     return redirect('home')
+
+
+@login_required(login_url='login')
+def recover_stuck_scrapers(request):
+    """
+    Manually trigger recovery of stuck scraping sessions.
+
+    Scans all running/pending sessions, checks if their Celery tasks are
+    actually alive, and marks dead/stale ones as failed. Also fixes
+    orphaned ScrapingState records.
+
+    Works for both GET (status-check JSON) and POST (trigger recovery).
+    """
+    if request.method == 'POST':
+        try:
+            count = recover_stuck_sessions()
+            msg = (
+                f"Recovery complete — {count} stuck session(s) recovered."
+                if count > 0
+                else "No stuck sessions found. Everything looks healthy."
+            )
+            messages.success(request, msg)
+
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': True, 'recovered': count, 'message': msg})
+
+            return redirect('home')
+        except Exception as e:
+            error_msg = f"Recovery error: {str(e)}"
+            messages.error(request, error_msg)
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'message': error_msg}, status=500)
+            return redirect('home')
+
+    # GET: return current stuck-session info as JSON (useful for monitoring)
+    from scraper.models import ScrapingSession
+    from scraper.utils import is_celery_task_alive
+    from django.utils import timezone as tz
+
+    active = ScrapingSession.objects.filter(
+        status__in=['running', 'pending']
+    ).select_related('website').order_by('started_at')
+
+    session_info = []
+    for s in active:
+        alive = is_celery_task_alive(s.celery_task_id)
+        age_min = (tz.now() - s.started_at).total_seconds() / 60
+        session_info.append({
+            'id': s.id,
+            'website': s.website.name,
+            'status': s.status,
+            'age_minutes': round(age_min, 1),
+            'task_id': s.celery_task_id,
+            'task_alive': alive,
+            'likely_stuck': (
+                alive is False
+                or (alive is None and age_min > 15)
+            ),
+        })
+
+    return JsonResponse({
+        'active_sessions': session_info,
+        'total_active': len(session_info),
+        'likely_stuck': sum(1 for s in session_info if s['likely_stuck']),
+    })
 
 @login_required(login_url='login')
 def start_all_fast_scraping(request):

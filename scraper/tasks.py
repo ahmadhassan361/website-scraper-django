@@ -818,15 +818,60 @@ def scrape_custom_website_common(session_id, website_config, task_instance, resu
         
         return {'status': 'failed', 'message': str(e)}
 
+# ==================== TASK HEALTH (internal – avoids circular import with utils.py) ====================
+
+def _is_task_alive_internal(task_id):
+    """
+    Lightweight alive-check for use *inside* tasks.py only.
+    Avoids circular imports (utils.py already imports from tasks.py).
+
+    Returns:
+        True  – task is STARTED (actively running)
+        False – task is dead (SUCCESS / FAILURE / REVOKED, or no ID)
+        None  – PENDING (ambiguous: could be queued OR dead worker)
+    """
+    if not task_id:
+        return False
+    try:
+        from celery import current_app as _app
+        state = _app.AsyncResult(task_id).state
+        if state in ('SUCCESS', 'FAILURE', 'REVOKED'):
+            return False
+        if state == 'STARTED':
+            return True
+        return None  # PENDING
+    except Exception:
+        return False
+
+
 # Website-specific scraper functions
 # Queue management for limiting concurrent scrapers to maximum 2
 def check_concurrent_scrapers():
-    """Check how many scrapers are currently running"""
-    running_count = ScrapingState.objects.filter(is_running=True).count()
-    return running_count
+    """
+    Count scrapers that are GENUINELY running (alive Celery tasks).
+    Ignores ScrapingState records whose tasks have died (stale DB entries).
+    """
+    running_states = ScrapingState.objects.filter(
+        is_running=True
+    ).select_related('current_session')
+
+    alive_count = 0
+    for state in running_states:
+        if not state.current_session:
+            continue
+        task_alive = _is_task_alive_internal(state.current_session.celery_task_id)
+        session_age_min = (
+            (timezone.now() - state.current_session.started_at).total_seconds() / 60
+        )
+        # Count as alive if: confirmed STARTED, or PENDING but recent (< 15 min)
+        if task_alive is True or (task_alive is None and session_age_min < 15):
+            alive_count += 1
+
+    return alive_count
+
 
 def can_start_scraper():
-    """Check if we can start a new scraper (max 2 concurrent)"""
+    """Check if we can start a new scraper (max 2 concurrent alive tasks)"""
     return check_concurrent_scrapers() < 2
 
 # Custom websites
@@ -3808,6 +3853,59 @@ def scrape_zionjudaica(self, session_id, resume_from_index=0):
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+# ==================== RECOVERY TASK + WORKER-READY SIGNAL ====================
+
+@shared_task(bind=True, name='scraper.tasks.recover_stuck_sessions_task',
+             soft_time_limit=120, time_limit=180)
+def recover_stuck_sessions_task(self):
+    """
+    Periodic Celery Beat task: runs every 5 minutes to recover stuck scraping sessions.
+
+    A session is considered stuck if:
+    - Its Celery task is dead (FAILURE / REVOKED / SUCCESS) but the DB still shows running/pending
+    - Its Celery task is PENDING and the session has been in that state for > 15 minutes
+      (indicates the worker died while processing it)
+    - Its ScrapingState.is_running=True but there is no valid current_session
+    """
+    try:
+        from scraper.utils import recover_stuck_sessions
+        count = recover_stuck_sessions()
+        logger.info(f"[RecoveryTask] Periodic recovery complete — {count} session(s) recovered")
+        return {'status': 'ok', 'recovered': count}
+    except Exception as e:
+        logger.error(f"[RecoveryTask] Error during periodic recovery: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
+# ── Worker-ready signal: runs recovery immediately when Celery starts ─────────
+from celery.signals import worker_ready
+
+
+@worker_ready.connect
+def on_worker_ready(sender, **kwargs):
+    """
+    Triggered when a Celery worker comes online.
+    Immediately scans for and fixes stuck sessions left over from the previous
+    worker run (e.g. after a crash, deploy, or OOM kill).
+    """
+    try:
+        # Small delay to let Django app fully initialise
+        import time as _time
+        _time.sleep(2)
+
+        import django
+        django.setup()
+
+        from scraper.utils import recover_stuck_sessions
+        count = recover_stuck_sessions()
+        logger.info(
+            f"[WorkerReady] Startup recovery complete — {count} stuck session(s) recovered"
+        )
+    except Exception as e:
+        logger.error(f"[WorkerReady] Error during startup recovery: {e}")
+
 
 @shared_task(bind=True, soft_time_limit=3600, time_limit=3660)
 def export_products_to_google_sheet(self, export_id, website_filter='all'):

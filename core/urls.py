@@ -43,6 +43,9 @@ urlpatterns = [
     path('start-all-scraping/', start_all_scraping, name='start_all_scraping'),
     path('stop-all-scraping/', stop_all_scraping, name='stop_all_scraping'),
     
+    # Recovery / Health-check
+    path('recover-stuck-scrapers/', recover_stuck_scrapers, name='recover_stuck_scrapers'),
+    
     # Fast Scrapers (Shopify)
     path('start-all-fast-scraping/', start_all_fast_scraping, name='start_all_fast_scraping'),
     path('stop-all-fast-scraping/', stop_all_fast_scraping, name='stop_all_fast_scraping'),

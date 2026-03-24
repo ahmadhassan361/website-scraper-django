@@ -13,6 +13,197 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from celery import current_app
 import importlib
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ==================== TASK HEALTH UTILITIES ====================
+
+def is_celery_task_alive(task_id):
+    """
+    Check if a Celery task is actually alive/running.
+
+    Returns:
+        True  - Task is actively running (STARTED state) - requires CELERY_TASK_TRACK_STARTED=True
+        False - Task is confirmed dead (SUCCESS / FAILURE / REVOKED, or no task_id)
+        None  - Unknown / PENDING (could be legitimately queued OR worker died mid-run)
+    """
+    if not task_id:
+        return False
+    try:
+        result = current_app.AsyncResult(task_id)
+        state = result.state
+        if state in ('SUCCESS', 'FAILURE', 'REVOKED'):
+            return False
+        if state == 'STARTED':
+            return True
+        # PENDING is ambiguous: task could be waiting in queue OR worker died
+        return None
+    except Exception as e:
+        logger.warning(f"Error checking Celery task {task_id} status: {e}")
+        return False
+
+
+def _reset_stuck_session(session, state=None, new_status='failed'):
+    """
+    Reset a stuck scraping session and its associated ScrapingState.
+    Safe to call on sessions that are already in a terminal state.
+    """
+    try:
+        if session.status not in ('completed', 'stopped', 'failed'):
+            session.status = new_status
+            session.completed_at = timezone.now()
+            session.save()
+            logger.info(
+                f"[Recovery] Reset session #{session.id} ({session.website.name}, "
+                f"was={session.status}) → {new_status}"
+            )
+
+        # Resolve the ScrapingState if not provided
+        if state is None:
+            try:
+                state = ScrapingState.objects.get(website=session.website)
+            except ScrapingState.DoesNotExist:
+                return
+
+        if state and (state.is_running or state.current_session_id == session.id):
+            state.is_running = False
+            state.current_session = None
+            state.save()
+
+    except Exception as e:
+        logger.error(f"[Recovery] Error resetting session #{session.id}: {e}")
+
+
+def recover_stuck_sessions():
+    """
+    Scan all 'running' and 'pending' sessions and recover those whose Celery
+    tasks are no longer alive.
+
+    Called on:
+      - Celery worker startup (worker_ready signal in tasks.py)
+      - Every 5 minutes by the recover_stuck_sessions_task periodic task
+      - Manually via the /recover-stuck-scrapers/ endpoint
+
+    Returns:
+        int: Number of sessions / states that were recovered / fixed
+    """
+    recovered = 0
+    now = timezone.now()
+    # A session stuck in PENDING for longer than this is considered orphaned
+    STUCK_PENDING_MINUTES = 15
+    # A session stuck in RUNNING with an ambiguous (PENDING) Celery state
+    STUCK_RUNNING_MINUTES = 15
+
+    # ── 1. Find all DB-level active sessions ──────────────────────────────
+    stuck_sessions = ScrapingSession.objects.filter(
+        status__in=['running', 'pending']
+    ).select_related('website').order_by('started_at')
+
+    for session in stuck_sessions:
+        task_alive = is_celery_task_alive(session.celery_task_id)
+        age_minutes = (now - session.started_at).total_seconds() / 60
+        should_recover = False
+        reason = ''
+
+        if task_alive is False:
+            # Confirmed dead: task finished / was revoked / has no ID
+            should_recover = True
+            reason = 'Celery task confirmed dead (SUCCESS/FAILURE/REVOKED or missing ID)'
+
+        elif task_alive is None:
+            # PENDING state - could be queued OR dead worker
+            if session.status == 'running' and age_minutes > STUCK_RUNNING_MINUTES:
+                should_recover = True
+                reason = (
+                    f'session marked running but Celery task is PENDING for '
+                    f'{age_minutes:.0f} min (> {STUCK_RUNNING_MINUTES} min) — worker likely died'
+                )
+            elif session.status == 'pending' and age_minutes > STUCK_PENDING_MINUTES:
+                should_recover = True
+                reason = (
+                    f'session stuck in pending for {age_minutes:.0f} min '
+                    f'(> {STUCK_PENDING_MINUTES} min threshold)'
+                )
+
+        elif not session.celery_task_id and age_minutes > 5:
+            # No task ID and session has been around for a while
+            should_recover = True
+            reason = 'no Celery task ID and session is older than 5 minutes'
+
+        if should_recover:
+            logger.info(
+                f"[Recovery] Recovering session #{session.id} "
+                f"({session.website.name}, status={session.status}): {reason}"
+            )
+            _reset_stuck_session(session, new_status='failed')
+            recovered += 1
+
+    # ── 2. Fix orphaned ScrapingState records ─────────────────────────────
+    orphaned_states = ScrapingState.objects.filter(
+        is_running=True
+    ).select_related('website', 'current_session')
+
+    for state in orphaned_states:
+        if not state.current_session:
+            state.is_running = False
+            state.save()
+            recovered += 1
+            logger.info(f"[Recovery] Fixed orphaned ScrapingState for {state.website.name} (no current_session)")
+        elif state.current_session.status not in ('running', 'pending'):
+            state.is_running = False
+            state.current_session = None
+            state.save()
+            recovered += 1
+            logger.info(
+                f"[Recovery] Fixed orphaned ScrapingState for {state.website.name} "
+                f"(session status={state.current_session.status})"
+            )
+
+    logger.info(f"[Recovery] Complete — {recovered} session(s)/state(s) recovered")
+    return recovered
+
+
+def force_stop_all_scraping():
+    """
+    Force-stop ALL scraping sessions across all websites regardless of task state.
+    Revokes Celery tasks, marks sessions as stopped, resets all ScrapingState records.
+
+    Returns:
+        dict with 'stopped' list, 'errors' list, 'total_stopped' count
+    """
+    stopped = []
+    errors = []
+
+    active_sessions = ScrapingSession.objects.filter(
+        status__in=['running', 'pending']
+    ).select_related('website')
+
+    for session in active_sessions:
+        try:
+            if session.celery_task_id:
+                try:
+                    current_app.control.revoke(session.celery_task_id, terminate=True)
+                    logger.info(f"[StopAll] Revoked task {session.celery_task_id} for {session.website.name}")
+                except Exception as re:
+                    logger.warning(f"[StopAll] Could not revoke task {session.celery_task_id}: {re}")
+
+            session.status = 'stopped'
+            session.completed_at = timezone.now()
+            session.save()
+            stopped.append(f"{session.website.name} (session #{session.id})")
+        except Exception as e:
+            errors.append(f"{session.website.name}: {str(e)}")
+
+    # Bulk-reset all running states
+    updated = ScrapingState.objects.filter(is_running=True).update(is_running=False, current_session=None)
+    logger.info(f"[StopAll] Reset {updated} ScrapingState record(s) to idle")
+
+    return {
+        'stopped': stopped,
+        'errors': errors,
+        'total_stopped': len(stopped),
+    }
 
 # Website scraper function mapping
 SCRAPER_FUNCTIONS = {
@@ -55,136 +246,268 @@ def get_scraper_function(function_name):
 
 def start_scraping_session(website_id, user=None, resume_from_index=0):
     """
-    Start a new scraping session for a website
+    Start a new scraping session for a website.
+
+    Includes:
+    - Duplicate prevention: checks both DB state AND actual Celery task liveness
+    - Auto-recovery: dead/stuck sessions for this website are cleaned up automatically
+      before attempting to start a new one
     """
     try:
         website = Website.objects.get(id=website_id)
-        
-        # Check if website is already running
-        state, created = ScrapingState.objects.get_or_create(website=website)
+
+        # ── Duplicate / stuck-session check ───────────────────────────────
+        # Look for ANY active (running or pending) sessions for this website in the DB.
+        # We intentionally check the DB directly rather than relying solely on
+        # ScrapingState.is_running because that flag can be stale after a crash.
+        active_sessions = ScrapingSession.objects.filter(
+            website=website,
+            status__in=['running', 'pending']
+        ).order_by('-started_at')
+
+        for active_session in active_sessions:
+            task_alive = is_celery_task_alive(active_session.celery_task_id)
+            age_minutes = (timezone.now() - active_session.started_at).total_seconds() / 60
+
+            if task_alive is True:
+                # Genuinely alive – refuse to start a duplicate
+                return {
+                    'success': False,
+                    'message': f'Scraping is already running for {website.name}',
+                    'session_id': active_session.id,
+                }
+
+            elif task_alive is False:
+                # Confirmed dead – auto-recover and continue
+                logger.info(
+                    f"[StartSession] Auto-recovering dead session #{active_session.id} "
+                    f"for {website.name} before starting new one"
+                )
+                _reset_stuck_session(active_session)
+
+            else:
+                # PENDING (ambiguous): decide based on age
+                if age_minutes < 15:
+                    # Recently queued – treat as still active to avoid duplicates
+                    return {
+                        'success': False,
+                        'message': (
+                            f'A scraping task for {website.name} is already queued or starting '
+                            f'(session #{active_session.id}, {age_minutes:.0f} min ago). '
+                            f'Wait a moment or use the recovery option if it appears stuck.'
+                        ),
+                        'session_id': active_session.id,
+                    }
+                else:
+                    # Old PENDING – likely a dead-worker orphan, recover it
+                    logger.info(
+                        f"[StartSession] Auto-recovering stale PENDING session #{active_session.id} "
+                        f"for {website.name} ({age_minutes:.0f} min old)"
+                    )
+                    _reset_stuck_session(active_session)
+
+        # ── Ensure ScrapingState is clean before starting ─────────────────
+        state, _ = ScrapingState.objects.get_or_create(website=website)
         if state.is_running:
-            return {
-                'success': False, 
-                'message': f'Scraping is already running for {website.name}',
-                'session_id': state.current_session.id if state.current_session else None
-            }
-        
-        # Create new scraping session
+            # No active sessions remain after recovery above – reset the flag
+            state.is_running = False
+            state.current_session = None
+            state.save()
+
+        # ── Create new session ────────────────────────────────────────────
         session = ScrapingSession.objects.create(
             website=website,
             status='pending',
             started_by=user,
-            last_processed_index=resume_from_index
+            last_processed_index=resume_from_index,
         )
-        
-        # Get the scraper function
+
         scraper_function = get_scraper_function(website.scraper_function)
         if not scraper_function:
             session.status = 'failed'
             session.save()
             return {
-                'success': False, 
-                'message': f'No scraper function found for {website.scraper_function}'
+                'success': False,
+                'message': f'No scraper function found for {website.scraper_function}',
             }
-        
-        # Start the Celery task
+
         task = scraper_function.delay(session.id, resume_from_index)
         session.celery_task_id = task.id
         session.save()
-        
+
+        logger.info(f"[StartSession] Started session #{session.id} for {website.name}, task={task.id}")
         return {
-            'success': True, 
+            'success': True,
             'message': f'Scraping started for {website.name}',
             'session_id': session.id,
-            'task_id': task.id
+            'task_id': task.id,
         }
-        
+
     except Website.DoesNotExist:
         return {'success': False, 'message': 'Website not found'}
     except Exception as e:
+        logger.exception(f"[StartSession] Unexpected error for website_id={website_id}")
         return {'success': False, 'message': f'Error starting scraping: {str(e)}'}
 
 def stop_scraping_session(website_id):
     """
-    Stop the current scraping session for a website
+    Stop the current scraping session for a website.
+
+    Improvements over the old version:
+    - Stops ALL active sessions for the website (not just the one in ScrapingState),
+      so orphaned duplicates are also cleaned up.
+    - Revoke errors are silently swallowed (task may already be dead).
+    - ScrapingState is reset regardless, so the UI always reflects the correct state.
     """
     try:
         website = Website.objects.get(id=website_id)
-        state = ScrapingState.objects.get(website=website)
-        
-        if not state.is_running or not state.current_session:
-            return {'success': False, 'message': 'No active scraping session found'}
-        
-        session = state.current_session
-        
-        # Revoke the Celery task
-        if session.celery_task_id:
-            current_app.control.revoke(session.celery_task_id, terminate=True)
-        
-        # Update session status
-        session.status = 'stopped'
-        session.completed_at = timezone.now()
-        session.save()
-        
-        # Update state
+
+        # Find ALL active sessions for this website (handles duplicates / orphans too)
+        active_sessions = ScrapingSession.objects.filter(
+            website=website,
+            status__in=['running', 'pending']
+        )
+
+        stopped_ids = []
+        for session in active_sessions:
+            if session.celery_task_id:
+                try:
+                    current_app.control.revoke(session.celery_task_id, terminate=True)
+                    logger.info(f"[StopSession] Revoked task {session.celery_task_id} for {website.name}")
+                except Exception as revoke_err:
+                    logger.warning(
+                        f"[StopSession] Could not revoke task {session.celery_task_id} "
+                        f"(may already be dead): {revoke_err}"
+                    )
+
+            session.status = 'stopped'
+            session.completed_at = timezone.now()
+            session.save()
+            stopped_ids.append(session.id)
+
+        # Always reset ScrapingState regardless of whether sessions were found
+        state, _ = ScrapingState.objects.get_or_create(website=website)
         state.is_running = False
         state.current_session = None
         state.save()
-        
-        return {
-            'success': True, 
-            'message': f'Scraping stopped for {website.name}',
-            'session_id': session.id
-        }
-        
+
+        if stopped_ids:
+            return {
+                'success': True,
+                'message': f'Scraping stopped for {website.name}',
+                'session_ids': stopped_ids,
+            }
+        else:
+            return {
+                'success': True,
+                'message': (
+                    f'No active sessions found for {website.name} — '
+                    'state has been reset to idle'
+                ),
+                'session_ids': [],
+            }
+
     except Website.DoesNotExist:
         return {'success': False, 'message': 'Website not found'}
-    except ScrapingState.DoesNotExist:
-        return {'success': False, 'message': 'No scraping state found'}
     except Exception as e:
+        logger.exception(f"[StopSession] Unexpected error for website_id={website_id}")
         return {'success': False, 'message': f'Error stopping scraping: {str(e)}'}
+
 
 def resume_scraping_session(session_id, user=None):
     """
-    Resume a paused or failed scraping session
+    Resume a paused / failed / stopped scraping session.
+
+    Includes alive-check: if the website already has a genuinely running task,
+    the resume is blocked. If the running state is stale (dead task), it is
+    auto-recovered before the resume proceeds.
     """
     try:
         session = ScrapingSession.objects.get(id=session_id)
-        
+
         if session.status not in ['paused', 'failed', 'stopped']:
-            return {'success': False, 'message': 'Session cannot be resumed'}
-        
-        # Check if website is currently running
-        state = ScrapingState.objects.get(website=session.website)
+            return {'success': False, 'message': 'Session cannot be resumed (wrong status)'}
+
+        website = session.website
+
+        # Check for any genuinely alive sessions for this website
+        active_sessions = ScrapingSession.objects.filter(
+            website=website,
+            status__in=['running', 'pending']
+        )
+
+        for active in active_sessions:
+            task_alive = is_celery_task_alive(active.celery_task_id)
+            age_minutes = (timezone.now() - active.started_at).total_seconds() / 60
+
+            if task_alive is True:
+                return {
+                    'success': False,
+                    'message': f'Website {website.name} is already running (session #{active.id})',
+                }
+            elif task_alive is False or (task_alive is None and age_minutes >= 15):
+                # Dead or stale – recover it so resume can proceed
+                logger.info(
+                    f"[ResumeSession] Auto-recovering {'dead' if task_alive is False else 'stale'} "
+                    f"session #{active.id} for {website.name} before resume"
+                )
+                _reset_stuck_session(active)
+            else:
+                # PENDING and recent – block the resume
+                return {
+                    'success': False,
+                    'message': (
+                        f'A task for {website.name} appears to be starting up '
+                        f'(session #{active.id}, {age_minutes:.0f} min ago). '
+                        'Wait a moment or use the recovery option if it appears stuck.'
+                    ),
+                }
+
+        # Ensure state is clean
+        state, _ = ScrapingState.objects.get_or_create(website=website)
         if state.is_running:
-            return {'success': False, 'message': 'Website is already running'}
-        
-        # Create new session based on the old one (to maintain history)
+            state.is_running = False
+            state.current_session = None
+            state.save()
+
+        # Create new session from where the old one left off
         new_session = ScrapingSession.objects.create(
-            website=session.website,
+            website=website,
             status='pending',
             started_by=user,
             last_processed_index=session.last_processed_index,
-            resume_data={'resumed_from_session': session.id}
+            resume_data={'resumed_from_session': session.id},
         )
-        
-        # Start the task from where we left off
-        scraper_function = get_scraper_function(session.website.scraper_function)
+
+        scraper_function = get_scraper_function(website.scraper_function)
+        if not scraper_function:
+            new_session.status = 'failed'
+            new_session.save()
+            return {
+                'success': False,
+                'message': f'No scraper function found for {website.scraper_function}',
+            }
+
         task = scraper_function.delay(new_session.id, session.last_processed_index)
         new_session.celery_task_id = task.id
         new_session.save()
-        
+
+        logger.info(
+            f"[ResumeSession] Resumed as session #{new_session.id} for {website.name}, "
+            f"from index={session.last_processed_index}, task={task.id}"
+        )
         return {
-            'success': True, 
-            'message': f'Scraping resumed for {session.website.name}',
+            'success': True,
+            'message': f'Scraping resumed for {website.name}',
             'session_id': new_session.id,
             'task_id': task.id,
-            'resumed_from_index': session.last_processed_index
+            'resumed_from_index': session.last_processed_index,
         }
-        
+
     except ScrapingSession.DoesNotExist:
         return {'success': False, 'message': 'Session not found'}
     except Exception as e:
+        logger.exception(f"[ResumeSession] Unexpected error for session_id={session_id}")
         return {'success': False, 'message': f'Error resuming scraping: {str(e)}'}
 
 def get_website_status(website_id):

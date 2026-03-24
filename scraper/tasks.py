@@ -474,25 +474,23 @@ def import_website_products_task(self, import_log_id, file_path, vendor_website=
                 # Track website SKUs
                 website_skus.add(website_sku)
                 
-                # Match product in database (vendor-specific)
-                product = SKUMatcher.match_product_by_sku(website_sku, website_product_id, vendor_website)
+                # Match ALL database products for this SKU (handles duplicate-SKU scenario)
+                matched_products = SKUMatcher.match_all_products_by_sku(website_sku, website_product_id, vendor_website)
                 
-                if product:
-                    # Create or update sync status
-                    sync_status, created = ProductSyncStatus.objects.get_or_create(
-                        product=product,
-                        defaults={
-                            'on_website': True,
-                            'website_sku': website_sku,
-                            'website_product_id': website_product_id,
-                            'status': 'synced'
-                        }
-                    )
-                    
-                    if not created:
-                        # Update existing sync status
-                        sync_status.mark_on_website(website_sku, website_product_id)
-                    
+                if matched_products:
+                    for product in matched_products:
+                        sync_status, created = ProductSyncStatus.objects.get_or_create(
+                            product=product,
+                            defaults={
+                                'on_website': True,
+                                'website_sku': website_sku,
+                                'website_product_id': website_product_id,
+                                'status': 'synced'
+                            }
+                        )
+                        if not created:
+                            # Update existing sync status for every matching product
+                            sync_status.mark_on_website(website_sku, website_product_id)
                     matched_count += 1
                 else:
                     # Track unmatched product
@@ -602,39 +600,68 @@ def import_website_products_task(self, import_log_id, file_path, vendor_website=
 
 
 @shared_task(bind=True, soft_time_limit=1800, time_limit=1860)
-def export_products_to_website_task(self, product_ids, output_filename):
+def export_products_to_website_task(self, product_ids, output_filename, export_log_id=None):
     """
-    Export selected products to website upload CSV format
-    
+    Export selected products to website upload CSV format.
+
     Args:
         product_ids: List of Product IDs to export
         output_filename: Output CSV filename
-        
+        export_log_id: Optional ProductExportLog ID for persistent status tracking
+
     Returns:
         Dict with status and file path
     """
     from django.conf import settings
-    from .models import Product, ProductSyncStatus
+    from .models import Product, ProductSyncStatus, ProductExportLog
     from .sync_utils import CSVParser
     from django.utils import timezone
     import os
-    
+
+    export_log = None
+    if export_log_id:
+        try:
+            export_log = ProductExportLog.objects.get(id=export_log_id)
+            export_log.status = 'processing'
+            export_log.celery_task_id = self.request.id
+            export_log.total_products = len(product_ids)
+            export_log.progress_percentage = 10
+            export_log.save()
+        except ProductExportLog.DoesNotExist:
+            pass
+
     try:
         # Get products
         products = Product.objects.filter(id__in=product_ids)
-        
+
         if not products.exists():
+            if export_log:
+                export_log.status = 'failed'
+                export_log.error_message = 'No products found'
+                export_log.save()
             return {'status': 'failed', 'message': 'No products found'}
-        
+
         # Generate output file path
         output_path = os.path.join(settings.BASE_DIR, output_filename)
-        
+
+        if export_log:
+            export_log.progress_percentage = 30
+            export_log.save()
+
         # Generate CSV
         count = CSVParser.generate_upload_csv(list(products), output_path)
-        
+
         if count == 0:
+            if export_log:
+                export_log.status = 'failed'
+                export_log.error_message = 'No products could be exported (check vendor configurations)'
+                export_log.save()
             return {'status': 'failed', 'message': 'No products could be exported (check vendor configurations)'}
-        
+
+        if export_log:
+            export_log.progress_percentage = 80
+            export_log.save()
+
         # Update sync status for exported products
         for product in products:
             sync_status, created = ProductSyncStatus.objects.get_or_create(
@@ -644,15 +671,31 @@ def export_products_to_website_task(self, product_ids, output_filename):
             sync_status.last_export_at = timezone.now()
             sync_status.selected_for_export = False  # Unselect after export
             sync_status.save()
-        
+
+        if export_log:
+            export_log.status = 'completed'
+            export_log.products_exported = count
+            export_log.file_path = output_path
+            export_log.progress_percentage = 100
+            export_log.completed_at = timezone.now()
+            export_log.save()
+
         return {
             'status': 'completed',
             'file_path': output_path,
             'products_exported': count,
+            'filename': output_filename,
             'message': f'Successfully exported {count} products to {output_filename}'
         }
-        
+
     except Exception as e:
+        if export_log:
+            try:
+                export_log.status = 'failed'
+                export_log.error_message = str(e)
+                export_log.save()
+            except Exception:
+                pass
         return {'status': 'failed', 'message': str(e)}
 
 def scrape_custom_website_common(session_id, website_config, task_instance, resume_from_index=0):

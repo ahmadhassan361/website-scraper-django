@@ -107,40 +107,96 @@ class SKUMatcher:
     @staticmethod
     def match_product_by_sku(website_sku: str, website_product_id: str = '', vendor_website: str = None) -> Optional[Product]:
         """
-        Match a product from website export to database product
+        Match a product from website export to database product (returns first match only).
         
+        Prefer match_all_products_by_sku() to handle duplicate-SKU scenarios correctly.
+        """
+        matches = SKUMatcher.match_all_products_by_sku(website_sku, website_product_id, vendor_website)
+        return matches[0] if matches else None
+
+    @staticmethod
+    def match_all_products_by_sku(website_sku: str, website_product_id: str = '', vendor_website: str = None) -> List[Product]:
+        """
+        Match ALL database products that correspond to a website SKU.
+
+        This is the correct method to use during import because the same SKU can
+        legitimately exist on multiple DB rows (e.g. a Shopify store reused a SKU
+        when it replaced a product, leaving the old row in our DB).  Marking every
+        matching product as "On Website" keeps the sync state consistent and avoids
+        phantom "New" products that confuse operators.
+
         Args:
-            website_sku: SKU as it appears on website (may have vendor prefix)
-            website_product_id: Product ID from website (not used for matching currently)
-            vendor_website: Vendor/website name to match against (REQUIRED for proper matching)
-            
+            website_sku: SKU as it appears on the website (may include vendor prefix)
+            website_product_id: Product ID from website export (not used for matching)
+            vendor_website: Vendor/website name — strongly recommended
+
         Returns:
-            Matched Product object or None
+            List of matched Product objects (may be empty, may have > 1 entry)
         """
         if not website_sku:
-            return None
-        
-        # Normalize the website SKU
+            return []
+
         normalized_website_sku = SKUMatcher.normalize_sku(website_sku)
-        
-        # PRIMARY STRATEGY: If vendor_website is specified (which it should be during import)
-        # This is the main path and should handle 99% of cases
+        matched: List[Product] = []
+        seen_ids: set = set()
+
         if vendor_website:
-            product = SKUMatcher._match_with_vendor_filter(
-                website_sku, normalized_website_sku, vendor_website
-            )
-            if product:
-                return product
-        
-        # FALLBACK: Only use these if vendor_website is not specified (shouldn't happen)
-        # Try direct SKU matching across all products
-        product = SKUMatcher._match_direct_sku(
-            website_sku, normalized_website_sku
-        )
-        if product:
-            return product
-        
-        return None
+            # ---------- vendor-scoped matching ----------
+            try:
+                website_obj = Website.objects.get(name__iexact=vendor_website, is_active=True)
+                vendor_config = VendorConfiguration.objects.get(website=website_obj, is_active=True)
+            except (Website.DoesNotExist, VendorConfiguration.DoesNotExist):
+                vendor_config = None
+
+            # Level 1 – exact case-insensitive match
+            for p in Product.objects.filter(website__iexact=vendor_website, sku__iexact=website_sku):
+                if p.id not in seen_ids:
+                    matched.append(p)
+                    seen_ids.add(p.id)
+
+            # Level 2 – strip vendor prefix then exact match
+            if vendor_config and vendor_config.sku_prefix:
+                if website_sku.upper().startswith(vendor_config.sku_prefix.upper()):
+                    base_sku = website_sku[len(vendor_config.sku_prefix):]
+                    for p in Product.objects.filter(website__iexact=vendor_website, sku__iexact=base_sku):
+                        if p.id not in seen_ids:
+                            matched.append(p)
+                            seen_ids.add(p.id)
+
+            # Level 3 – normalised match (handles punctuation/spacing differences)
+            for p in Product.objects.filter(website__iexact=vendor_website):
+                if p.id in seen_ids:
+                    continue
+                p_norm = SKUMatcher.normalize_sku(p.sku or '')
+                if p_norm == normalized_website_sku:
+                    matched.append(p)
+                    seen_ids.add(p.id)
+                    continue
+                if vendor_config and vendor_config.sku_prefix:
+                    prefix_norm = SKUMatcher.normalize_sku(vendor_config.sku_prefix)
+                    if normalized_website_sku.startswith(prefix_norm):
+                        base_norm = normalized_website_sku[len(prefix_norm):]
+                        if p_norm == base_norm:
+                            matched.append(p)
+                            seen_ids.add(p.id)
+
+            return matched
+
+        # ---------- fallback: no vendor filter ----------
+        for p in Product.objects.filter(sku__iexact=website_sku):
+            if p.id not in seen_ids:
+                matched.append(p)
+                seen_ids.add(p.id)
+
+        if not matched:
+            for p in Product.objects.all():
+                if p.id in seen_ids:
+                    continue
+                if SKUMatcher.normalize_sku(p.sku or '') == normalized_website_sku:
+                    matched.append(p)
+                    seen_ids.add(p.id)
+
+        return matched
     
     @staticmethod
     def _match_with_vendor_filter(website_sku: str, normalized_sku: str, vendor_website: str) -> Optional[Product]:

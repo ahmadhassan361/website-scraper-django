@@ -319,6 +319,37 @@ class ProductSyncStatus(models.Model):
         self.save()
 
 
+class ProductExportLog(models.Model):
+    """Model to track product export jobs persistently (survives page refresh)"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    filename = models.CharField(max_length=500)
+    celery_task_id = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    total_products = models.IntegerField(default=0)
+    products_exported = models.IntegerField(default=0)
+    progress_percentage = models.IntegerField(default=0)
+    file_path = models.CharField(max_length=1000, blank=True, default='')
+    error_message = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Product Export Log"
+        verbose_name_plural = "Product Export Logs"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Export {self.id} - {self.filename} - {self.get_status_display()}"
+
+
 class WebsiteImportLog(models.Model):
     """Model to log website product imports"""
     STATUS_CHOICES = [

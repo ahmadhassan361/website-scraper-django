@@ -35,6 +35,41 @@
     </div>
 </nav>
 
+<!-- ====== Persistent Job Status Banners ====== -->
+<div id="importJobBanner" class="d-none" style="position:sticky;top:56px;z-index:1040;">
+    <div class="alert alert-info alert-dismissible mb-0 border-0 rounded-0 d-flex align-items-center gap-3 px-4 py-2" id="importBannerInner">
+        <div class="spinner-border spinner-border-sm text-primary flex-shrink-0" role="status" id="importBannerSpinner"></div>
+        <div class="flex-grow-1">
+            <strong>Import in progress</strong>
+            <span id="importBannerVendor"></span> &mdash;
+            <span id="importBannerPct">0</span>% complete
+            <div class="progress mt-1" style="height:6px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="importBannerBar" style="width:0%"></div>
+            </div>
+        </div>
+        <small class="text-muted" id="importBannerRows"></small>
+    </div>
+</div>
+
+<div id="exportJobBanner" class="d-none" style="position:sticky;top:56px;z-index:1040;">
+    <div class="alert alert-success alert-dismissible mb-0 border-0 rounded-0 d-flex align-items-center gap-3 px-4 py-2" id="exportBannerInner">
+        <div class="spinner-border spinner-border-sm text-success flex-shrink-0 d-none" id="exportBannerSpinner" role="status"></div>
+        <i class="fas fa-check-circle text-success flex-shrink-0 d-none" id="exportBannerDone"></i>
+        <div class="flex-grow-1">
+            <strong id="exportBannerTitle">Export in progress</strong> &mdash;
+            <span id="exportBannerPct">0</span>% complete
+            <div class="progress mt-1" style="height:6px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" id="exportBannerBar" style="width:0%"></div>
+            </div>
+        </div>
+        <button class="btn btn-sm btn-success d-none" id="exportBannerDownloadBtn" onclick="downloadExportFromBanner()">
+            <i class="fas fa-download"></i> Download File
+        </button>
+        <button type="button" class="btn-close" onclick="dismissExportBanner()"></button>
+    </div>
+</div>
+<!-- ====== End Persistent Banners ====== -->
+
 <div class="container-fluid mt-4">
     <!-- Page Header -->
     <div class="row mb-4">
@@ -371,122 +406,236 @@
 
 {% block javascript %}
 <script>
-// Helper: update the Selected counter card by delta (+1 or -1)
+// =====================================================================
+// STATE
+// =====================================================================
+var _activeImportLogId  = null;
+var _importPollInterval = null;
+var _activeExportLogId  = null;
+var _exportPollInterval = null;
+
+// =====================================================================
+// HELPERS
+// =====================================================================
 function updateSelectedCount(delta) {
     var $counter = $('#selectedCount');
     var current = parseInt($counter.text(), 10) || 0;
-    var updated = Math.max(0, current + delta);
-    $counter.text(updated);
+    $counter.text(Math.max(0, current + delta));
 }
 
-// Toggle product selection
-$('.product-select').change(function() {
-    var productId = $(this).data('product-id');
-    var isChecked = $(this).is(':checked');
-    var checkbox = $(this);
-    
-    console.log('Toggling product:', productId, 'to:', isChecked);
-    
-    $.ajax({
-        url: '{% url "scraper:toggle_product_selection" %}',
-        method: 'POST',
-        data: {
-            'csrfmiddlewaretoken': '{{ csrf_token }}',
-            'product_id': productId
-        },
-        success: function(response) {
-            console.log('Toggle response:', response);
-            if (response.success) {
-                // Visual feedback
-                var row = checkbox.closest('tr');
-                if (response.selected) {
-                    row.addClass('table-info');
-                    updateSelectedCount(+1);
-                } else {
-                    row.removeClass('table-info');
-                    updateSelectedCount(-1);
-                }
-            } else {
-                alert('Error: ' + response.error);
-                checkbox.prop('checked', !isChecked);  // Revert checkbox
-            }
-        },
-        error: function(xhr) {
-            console.error('Toggle error:', xhr);
-            alert('Error updating selection');
-            checkbox.prop('checked', !isChecked);  // Revert checkbox
-        }
-    });
-});
-
-// Bulk select
-function bulkSelect(action) {
-    var website = '{{ website_filter }}';
-    
-    $.ajax({
-        url: '{% url "scraper:bulk_select_products" %}',
-        method: 'POST',
-        data: {
-            'csrfmiddlewaretoken': '{{ csrf_token }}',
-            'action': action,
-            'website': website
-        },
-        success: function(response) {
-            if (response.success) {
-                alert(response.message);
-                location.reload();
-            }
-        }
-    });
+// =====================================================================
+// IMPORT BANNER
+// =====================================================================
+function showImportBanner(importLogId, vendor, pct, rows, total) {
+    _activeImportLogId = importLogId;
+    $('#importBannerVendor').text(vendor ? ' for ' + vendor : '');
+    setImportBannerPct(pct, rows, total);
+    $('#importJobBanner').removeClass('d-none');
 }
 
-// Export selected products
-function exportSelectedProducts() {
-    if (!confirm('Export selected products?')) return;
-    
-    $.ajax({
-        url: '{% url "scraper:export_selected_products" %}',
-        method: 'POST',
-        data: {
-            'csrfmiddlewaretoken': '{{ csrf_token }}'
-        },
-        success: function(response) {
-            if (response.success) {
-                alert('Export started! Task ID: ' + response.task_id);
-                checkExportStatus(response.task_id, response.filename);
-            } else {
-                alert('Error: ' + response.error);
-            }
-        }
-    });
+function setImportBannerPct(pct, rows, total) {
+    pct = pct || 0;
+    $('#importBannerPct').text(pct);
+    $('#importBannerBar').css('width', pct + '%');
+    if (rows && total) {
+        $('#importBannerRows').text(rows + ' / ' + total + ' rows');
+    }
 }
 
-// Check export status
-function checkExportStatus(taskId, filename) {
-    var interval = setInterval(function() {
+function hideImportBanner() {
+    $('#importJobBanner').addClass('d-none');
+    _activeImportLogId = null;
+    if (_importPollInterval) { clearInterval(_importPollInterval); _importPollInterval = null; }
+}
+
+// =====================================================================
+// EXPORT BANNER
+// =====================================================================
+function showExportBanner(exportLogId, pct, filename, isComplete, fileExists) {
+    _activeExportLogId = exportLogId;
+    $('#exportJobBanner').removeClass('d-none');
+    setExportBannerPct(pct, isComplete, fileExists, filename);
+}
+
+function setExportBannerPct(pct, isComplete, fileExists, filename) {
+    pct = pct || 0;
+    $('#exportBannerPct').text(pct);
+    $('#exportBannerBar').css('width', pct + '%');
+    if (isComplete && fileExists) {
+        $('#exportBannerSpinner').addClass('d-none');
+        $('#exportBannerDone').removeClass('d-none');
+        $('#exportBannerTitle').text('Export complete — ready to download');
+        $('#exportBannerBar').css('width', '100%');
+        $('#exportBannerDownloadBtn').removeClass('d-none');
+        if (_exportPollInterval) { clearInterval(_exportPollInterval); _exportPollInterval = null; }
+    } else if (isComplete) {
+        $('#exportBannerTitle').text('Export complete — file not found on server');
+        $('#exportBannerSpinner').addClass('d-none');
+    } else {
+        $('#exportBannerSpinner').removeClass('d-none');
+        $('#exportBannerDone').addClass('d-none');
+        $('#exportBannerTitle').text('Export in progress');
+        $('#exportBannerDownloadBtn').addClass('d-none');
+    }
+}
+
+function dismissExportBanner() {
+    $('#exportJobBanner').addClass('d-none');
+    if (_exportPollInterval) { clearInterval(_exportPollInterval); _exportPollInterval = null; }
+}
+
+function downloadExportFromBanner() {
+    if (!_activeExportLogId) return;
+    window.location.href = '/scraper/sync/export-log/' + _activeExportLogId + '/download/';
+}
+
+// =====================================================================
+// POLLING — IMPORT
+// =====================================================================
+function startImportPolling(importLogId, vendor) {
+    if (_importPollInterval) clearInterval(_importPollInterval);
+    _importPollInterval = setInterval(function() {
         $.ajax({
-            url: '/scraper/sync/export/' + taskId + '/status/',
+            url: '/scraper/sync/import/' + importLogId + '/status/',
             success: function(response) {
+                setImportBannerPct(response.progress, response.processed_rows, response.total_rows);
+                // also update modal if open
+                $('#importProgressBar').css('width', response.progress + '%');
+                $('#importStatus').text('Processing... ' + response.progress + '%');
+
                 if (response.status === 'completed') {
-                    clearInterval(interval);
-                    if (confirm('Export completed! Download now?')) {
-                        window.location.href = '/scraper/sync/download/' + filename + '/';
+                    clearInterval(_importPollInterval); _importPollInterval = null;
+                    hideImportBanner();
+                    $('#importStatus').text('Import completed!');
+                    var unmatchedProducts = response.unmatched_products || [];
+                    var selectedVendor = vendor || $('#import_website').val();
+                    if (unmatchedProducts.length > 0) {
+                        showUnmatchedProductsModal(unmatchedProducts, response, selectedVendor);
+                    } else {
+                        var message = 'Import completed for ' + selectedVendor + '!\n\n'
+                            + 'Total rows in CSV: ' + response.total_rows + '\n'
+                            + 'Products matched (on website): ' + response.matched_products + '\n'
+                            + 'New products (not on website): ' + response.new_products_found + '\n'
+                            + 'Skipped rows: ' + response.skipped_rows;
+                        alert(message);
+                        window.location.href = '/scraper/sync/?website=' + selectedVendor + '&status=new&q=';
                     }
                 } else if (response.status === 'failed') {
-                    clearInterval(interval);
-                    alert('Export failed: ' + response.error);
+                    clearInterval(_importPollInterval); _importPollInterval = null;
+                    hideImportBanner();
+                    alert('Import failed: ' + response.error_message);
+                }
+            }
+        });
+    }, 1500);
+}
+
+// =====================================================================
+// POLLING — EXPORT
+// =====================================================================
+function startExportPolling(exportLogId) {
+    if (_exportPollInterval) clearInterval(_exportPollInterval);
+    _exportPollInterval = setInterval(function() {
+        $.ajax({
+            url: '/scraper/sync/export-log/' + exportLogId + '/status/',
+            success: function(response) {
+                setExportBannerPct(response.progress, response.status === 'completed', response.file_exists, response.filename);
+                if (response.status === 'failed') {
+                    clearInterval(_exportPollInterval); _exportPollInterval = null;
+                    showToast('Export failed: ' + (response.error_message || 'Unknown error'), 'danger');
                 }
             }
         });
     }, 2000);
 }
 
-// Submit import
+// =====================================================================
+// ON PAGE LOAD — restore banners from server state
+// =====================================================================
+$(document).ready(function() {
+    $.ajax({
+        url: '{% url "scraper:active_jobs_status" %}',
+        success: function(data) {
+            if (data.active_import) {
+                var imp = data.active_import;
+                showImportBanner(imp.id, imp.vendor, imp.progress, imp.processed_rows, imp.total_rows);
+                startImportPolling(imp.id, imp.vendor);
+            }
+            if (data.active_export) {
+                var exp = data.active_export;
+                showExportBanner(exp.id, exp.progress, exp.filename, exp.status === 'completed', exp.file_exists);
+                if (exp.status !== 'completed') {
+                    startExportPolling(exp.id);
+                }
+            }
+        }
+    });
+});
+
+// =====================================================================
+// EXPORT ACTION
+// =====================================================================
+function exportSelectedProducts() {
+    if (!confirm('Export selected products?')) return;
+
+    $.ajax({
+        url: '{% url "scraper:export_selected_products" %}',
+        method: 'POST',
+        data: { 'csrfmiddlewaretoken': '{{ csrf_token }}' },
+        success: function(response) {
+            if (response.success) {
+                showToast('Export started! Tracking in the status bar above.', 'success');
+                showExportBanner(response.export_log_id, 0, response.filename, false, false);
+                startExportPolling(response.export_log_id);
+            } else if (response.already_running) {
+                // Reconnect to existing job banner
+                showToast('An export is already in progress — reconnecting status bar.', 'success');
+                showExportBanner(response.export_log_id, response.progress, '', false, false);
+                startExportPolling(response.export_log_id);
+            } else if (response.pending_download) {
+                // Completed export awaiting download
+                if (confirm(
+                    'A completed export (' + response.products_exported + ' products) is ready.\n' +
+                    'File: ' + response.filename + '\n\nDownload it now?'
+                )) {
+                    window.location.href = '/scraper/sync/export-log/' + response.export_log_id + '/download/';
+                } else {
+                    showExportBanner(response.export_log_id, 100, response.filename, true, true);
+                }
+            } else {
+                alert('Error: ' + response.error);
+            }
+        },
+        error: function(xhr) {
+            try {
+                var r = JSON.parse(xhr.responseText);
+                if (r.already_running) {
+                    showToast('Export already running — reconnecting status bar.', 'success');
+                    showExportBanner(r.export_log_id, r.progress, '', false, false);
+                    startExportPolling(r.export_log_id);
+                } else if (r.pending_download) {
+                    if (confirm('A completed export (' + r.products_exported + ' products) is ready.\nDownload now?')) {
+                        window.location.href = '/scraper/sync/export-log/' + r.export_log_id + '/download/';
+                    } else {
+                        showExportBanner(r.export_log_id, 100, r.filename, true, true);
+                    }
+                } else {
+                    alert('Error: ' + (r.error || 'Unknown error'));
+                }
+            } catch(e) {
+                alert('Error starting export');
+            }
+        }
+    });
+}
+
+// =====================================================================
+// IMPORT ACTION
+// =====================================================================
 function submitImport() {
     var formData = new FormData($('#importForm')[0]);
-    
     $('#importProgress').removeClass('d-none');
-    
+
     $.ajax({
         url: '{% url "scraper:import_website_products" %}',
         method: 'POST',
@@ -495,53 +644,38 @@ function submitImport() {
         contentType: false,
         success: function(response) {
             if (response.success) {
-                checkImportStatus(response.import_log_id);
+                var vendor = response.vendor;
+                bootstrap.Modal.getInstance(document.getElementById('importModal')).hide();
+                showImportBanner(response.import_log_id, vendor, 0, 0, 0);
+                startImportPolling(response.import_log_id, vendor);
+            } else if (response.already_running) {
+                $('#importProgress').addClass('d-none');
+                bootstrap.Modal.getInstance(document.getElementById('importModal')).hide();
+                showToast('Import for "' + response.vendor + '" already running — reconnecting status bar.', 'success');
+                showImportBanner(response.import_log_id, response.vendor, response.progress, 0, 0);
+                startImportPolling(response.import_log_id, response.vendor);
             } else {
+                $('#importProgress').addClass('d-none');
                 alert('Error: ' + response.error);
+            }
+        },
+        error: function(xhr) {
+            $('#importProgress').addClass('d-none');
+            try {
+                var r = JSON.parse(xhr.responseText);
+                if (r.already_running) {
+                    bootstrap.Modal.getInstance(document.getElementById('importModal')).hide();
+                    showToast('Import for "' + r.vendor + '" already running — reconnecting status bar.', 'success');
+                    showImportBanner(r.import_log_id, r.vendor, r.progress, 0, 0);
+                    startImportPolling(r.import_log_id, r.vendor);
+                } else {
+                    alert('Error: ' + (r.error || 'Unknown error'));
+                }
+            } catch(e) {
+                alert('Error starting import');
             }
         }
     });
-}
-
-// Check import status
-function checkImportStatus(importLogId) {
-    var selectedVendor = $('#import_website').val();
-    
-    var interval = setInterval(function() {
-        $.ajax({
-            url: '/scraper/sync/import/' + importLogId + '/status/',
-            success: function(response) {
-                $('#importProgressBar').css('width', response.progress + '%');
-                $('#importStatus').text('Processing... ' + response.progress + '%');
-                
-                if (response.status === 'completed') {
-                    clearInterval(interval);
-                    $('#importStatus').text('Import completed!');
-                    
-                    // Show unmatched products if any
-                    var unmatchedProducts = response.unmatched_products || [];
-                    
-                    if (unmatchedProducts.length > 0) {
-                        showUnmatchedProductsModal(unmatchedProducts, response, selectedVendor);
-                    } else {
-                        var message = 'Import completed for ' + selectedVendor + '!\n\n';
-                        message += 'Total rows in CSV: ' + response.total_rows + '\n';
-                        message += 'Products matched (on website): ' + response.matched_products + '\n';
-                        message += 'New products (not on website): ' + response.new_products_found + '\n';
-                        message += 'Skipped rows: ' + response.skipped_rows;
-                        
-                        alert(message);
-                        
-                        // Redirect to show new products for this vendor
-                        window.location.href = '/scraper/sync/?website=' + selectedVendor + '&status=new&q=';
-                    }
-                } else if (response.status === 'failed') {
-                    clearInterval(interval);
-                    alert('Import failed: ' + response.error_message);
-                }
-            }
-        });
-    }, 1000);
 }
 
 // Show unmatched products modal

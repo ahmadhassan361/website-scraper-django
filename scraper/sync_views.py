@@ -15,8 +15,8 @@ import os
 import csv
 
 from .models import (
-    Website, Product, VendorConfiguration, ProductSyncStatus, 
-    WebsiteImportLog
+    Website, Product, VendorConfiguration, ProductSyncStatus,
+    WebsiteImportLog, ProductExportLog
 )
 from .sync_utils import SyncStatistics, SKUMatcher, CSVParser
 from .tasks import import_website_products_task, export_products_to_website_task
@@ -297,54 +297,63 @@ def bulk_select_products(request):
 @require_http_methods(["POST"])
 def import_website_products(request):
     """
-    Import products from website export CSV
-    Upload CSV file and start background task
+    Import products from website export CSV.
+    Only one import is allowed at a time.
     """
-    if 'csv_file' not in request.FILES:
+    # ------------------------------------------------------------------
+    # One-at-a-time enforcement
+    # ------------------------------------------------------------------
+    active_import = WebsiteImportLog.objects.filter(
+        status__in=['pending', 'processing']
+    ).order_by('-created_at').first()
+
+    if active_import:
         return JsonResponse({
             'success': False,
-            'error': 'No file uploaded'
-        }, status=400)
-    
+            'already_running': True,
+            'import_log_id': active_import.id,
+            'vendor': active_import.vendor_website,
+            'progress': active_import.progress_percentage,
+            'status': active_import.status,
+            'error': (
+                f'An import is already running for "{active_import.vendor_website}" '
+                f'({active_import.progress_percentage}% complete). '
+                f'Please wait for it to finish before starting a new one.'
+            )
+        }, status=409)
+
+    if 'csv_file' not in request.FILES:
+        return JsonResponse({'success': False, 'error': 'No file uploaded'}, status=400)
+
     csv_file = request.FILES['csv_file']
     vendor_website = request.POST.get('website', '')
-    
-    # Validate vendor selection
+
     if not vendor_website:
-        return JsonResponse({
-            'success': False,
-            'error': 'Please select a vendor/website'
-        }, status=400)
-    
-    # Validate file
+        return JsonResponse({'success': False, 'error': 'Please select a vendor/website'}, status=400)
+
     if not csv_file.name.endswith('.csv'):
-        return JsonResponse({
-            'success': False,
-            'error': 'File must be a CSV'
-        }, status=400)
-    
+        return JsonResponse({'success': False, 'error': 'File must be a CSV'}, status=400)
+
     # Save file temporarily
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='wb') as tmp_file:
         for chunk in csv_file.chunks():
             tmp_file.write(chunk)
         tmp_file_path = tmp_file.name
-    
+
     # Create import log
     import_log = WebsiteImportLog.objects.create(
         filename=csv_file.name,
         uploaded_by=request.user,
-        vendor_website=vendor_website,  # Store vendor
+        vendor_website=vendor_website,
         status='pending'
     )
-    
-    # Start background task with vendor filter
+
+    # Start background task
     task = import_website_products_task.delay(import_log.id, tmp_file_path, vendor_website)
-    
-    # Update task ID
     import_log.celery_task_id = task.id
     import_log.save()
-    
+
     return JsonResponse({
         'success': True,
         'import_log_id': import_log.id,
@@ -382,52 +391,208 @@ def import_status(request, import_log_id):
 @require_http_methods(["POST"])
 def export_selected_products(request):
     """
-    Export selected products to website upload CSV
+    Export selected products to website upload CSV.
+    Only one export is allowed at a time (enforced via ProductExportLog).
     """
+    # ------------------------------------------------------------------
+    # One-at-a-time enforcement
+    # ------------------------------------------------------------------
+    active_export = ProductExportLog.objects.filter(
+        status__in=['pending', 'processing']
+    ).order_by('-created_at').first()
+
+    if active_export:
+        return JsonResponse({
+            'success': False,
+            'already_running': True,
+            'export_log_id': active_export.id,
+            'progress': active_export.progress_percentage,
+            'status': active_export.status,
+            'error': (
+                f'An export is already running ({active_export.progress_percentage}% complete). '
+                f'Please wait for it to finish before starting a new one.'
+            )
+        }, status=409)
+
+    # ------------------------------------------------------------------
+    # Check for a recently-completed export that hasn't been downloaded yet
+    # (completed within the last 24 hours and file still exists)
+    # ------------------------------------------------------------------
+    recent_completed = ProductExportLog.objects.filter(
+        status='completed'
+    ).order_by('-completed_at').first()
+
+    if recent_completed and recent_completed.file_path:
+        if os.path.exists(recent_completed.file_path):
+            from datetime import timedelta
+            age = timezone.now() - recent_completed.completed_at
+            if age < timedelta(hours=24):
+                return JsonResponse({
+                    'success': False,
+                    'pending_download': True,
+                    'export_log_id': recent_completed.id,
+                    'filename': recent_completed.filename,
+                    'products_exported': recent_completed.products_exported,
+                    'error': (
+                        f'A completed export is waiting to be downloaded '
+                        f'({recent_completed.products_exported} products). '
+                        f'Please download it first.'
+                    )
+                }, status=409)
+
+    # ------------------------------------------------------------------
     # Get selected products
+    # ------------------------------------------------------------------
     selected_statuses = ProductSyncStatus.objects.filter(selected_for_export=True)
     selected_product_ids = list(selected_statuses.values_list('product_id', flat=True))
-    
-    # Debug logging
-    print(f"DEBUG: Total ProductSyncStatus records: {ProductSyncStatus.objects.count()}")
-    print(f"DEBUG: Selected for export: {selected_statuses.count()}")
-    print(f"DEBUG: Selected product IDs: {selected_product_ids}")
-    
+
     if not selected_product_ids:
-        # Return detailed error
         total_sync_status = ProductSyncStatus.objects.count()
         return JsonResponse({
             'success': False,
             'error': f'No products selected for export. Total sync status records: {total_sync_status}'
         }, status=400)
-    
+
     # Generate filename
     timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
     filename = f'upload-products-to-website-{timestamp}.csv'
-    
-    # Start background task
+
+    # Create persistent export log record
+    export_log = ProductExportLog.objects.create(
+        filename=filename,
+        total_products=len(selected_product_ids),
+        status='pending',
+        created_by=request.user,
+    )
+
+    # Start background task, passing the export_log_id
     task = export_products_to_website_task.delay(
         list(selected_product_ids),
-        filename
+        filename,
+        export_log_id=export_log.id,
     )
-    
+
+    export_log.celery_task_id = task.id
+    export_log.save()
+
     return JsonResponse({
         'success': True,
-        'task_id': task.id,
+        'export_log_id': export_log.id,
         'filename': filename,
         'message': f'Exporting {len(selected_product_ids)} products...'
     })
 
 
 @login_required
+def export_log_status(request, export_log_id):
+    """
+    Get status of an export operation via ProductExportLog ID (persistent).
+    """
+    try:
+        export_log = ProductExportLog.objects.get(id=export_log_id)
+        return JsonResponse({
+            'status': export_log.status,
+            'progress': export_log.progress_percentage,
+            'total_products': export_log.total_products,
+            'products_exported': export_log.products_exported,
+            'filename': export_log.filename,
+            'error_message': export_log.error_message,
+            'file_exists': bool(export_log.file_path and os.path.exists(export_log.file_path)),
+        })
+    except ProductExportLog.DoesNotExist:
+        return JsonResponse({'error': 'Export log not found'}, status=404)
+
+
+@login_required
+def download_export_by_log(request, export_log_id):
+    """
+    Download the CSV file for a completed export using the ProductExportLog ID.
+    """
+    try:
+        export_log = ProductExportLog.objects.get(id=export_log_id)
+    except ProductExportLog.DoesNotExist:
+        return HttpResponse('Export not found', status=404)
+
+    if export_log.status != 'completed':
+        return HttpResponse('Export not yet completed', status=400)
+
+    file_path = export_log.file_path
+    if not file_path or not os.path.exists(file_path):
+        return HttpResponse('Export file not found on server', status=404)
+
+    response = FileResponse(open(file_path, 'rb'), content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="{export_log.filename}"'
+    return response
+
+
+@login_required
+def active_jobs_status(request):
+    """
+    Returns active import and export job information so the frontend can
+    show persistent status banners after a page refresh.
+    """
+    # Active import
+    active_import = WebsiteImportLog.objects.filter(
+        status__in=['pending', 'processing']
+    ).order_by('-created_at').first()
+
+    # Most recent export: active OR recently-completed (last 24 hours with file present)
+    active_export = ProductExportLog.objects.filter(
+        status__in=['pending', 'processing']
+    ).order_by('-created_at').first()
+
+    recent_export = None
+    if not active_export:
+        from datetime import timedelta
+        candidate = ProductExportLog.objects.filter(
+            status='completed'
+        ).order_by('-completed_at').first()
+        if candidate and candidate.file_path and os.path.exists(candidate.file_path):
+            age = timezone.now() - candidate.completed_at
+            if age < timedelta(hours=24):
+                recent_export = candidate
+
+    import_data = None
+    if active_import:
+        import_data = {
+            'id': active_import.id,
+            'status': active_import.status,
+            'progress': active_import.progress_percentage,
+            'vendor': active_import.vendor_website,
+            'filename': active_import.filename,
+            'total_rows': active_import.total_rows,
+            'processed_rows': active_import.processed_rows,
+        }
+
+    export_data = None
+    export_obj = active_export or recent_export
+    if export_obj:
+        export_data = {
+            'id': export_obj.id,
+            'status': export_obj.status,
+            'progress': export_obj.progress_percentage,
+            'filename': export_obj.filename,
+            'total_products': export_obj.total_products,
+            'products_exported': export_obj.products_exported,
+            'file_exists': bool(export_obj.file_path and os.path.exists(export_obj.file_path)),
+        }
+
+    return JsonResponse({
+        'active_import': import_data,
+        'active_export': export_data,
+    })
+
+
+@login_required
 def export_status(request, task_id):
     """
-    Get status of export operation
+    Legacy: Get status of export operation by Celery task ID.
+    Kept for backward compatibility.
     """
     from celery.result import AsyncResult
-    
+
     task_result = AsyncResult(task_id)
-    
+
     if task_result.ready():
         result = task_result.result
         if isinstance(result, dict) and result.get('status') == 'completed':
@@ -440,28 +605,24 @@ def export_status(request, task_id):
         else:
             return JsonResponse({
                 'status': 'failed',
-                'error': result.get('message', 'Unknown error')
+                'error': str(result.get('message', 'Unknown error')) if isinstance(result, dict) else 'Unknown error'
             })
     else:
-        return JsonResponse({
-            'status': 'processing',
-            'progress': 50,
-        })
+        return JsonResponse({'status': 'processing', 'progress': 50})
 
 
 @login_required
 def download_export(request, filename):
     """
-    Download exported CSV file
+    Download exported CSV file by filename (legacy / direct).
     """
     file_path = os.path.join(settings.BASE_DIR, filename)
-    
+
     if not os.path.exists(file_path):
         return HttpResponse('File not found', status=404)
-    
+
     response = FileResponse(open(file_path, 'rb'), content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    
     return response
 
 

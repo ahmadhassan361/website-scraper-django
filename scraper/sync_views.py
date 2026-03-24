@@ -296,42 +296,82 @@ def toggle_product_selection(request):
 @require_http_methods(["POST"])
 def bulk_select_products(request):
     """
-    Bulk select/deselect products for export
+    Bulk select/deselect products for export across ALL pages.
+
+    POST params:
+        action         — 'select_all' | 'select_new' | 'deselect_all'
+        website        — website name filter, or 'all'
+        status_filter  — current status tab filter (used to narrow select_new correctly)
     """
-    action = request.POST.get('action')  # 'select_all', 'deselect_all', 'select_new'
+    action        = request.POST.get('action')        # select_all | deselect_all | select_new
     website_filter = request.POST.get('website', 'all')
-    
+    status_filter  = request.POST.get('status_filter', 'all')
+
+    # Build the same queryset the dashboard uses so filters are respected
     products_query = Product.objects.all()
-    
     if website_filter != 'all':
         products_query = products_query.filter(website__iexact=website_filter)
-    
+
+    # Never touch disabled products
+    disabled_ids = ProductSyncStatus.objects.filter(
+        is_disabled=True
+    ).values_list('product_id', flat=True)
+    products_query = products_query.exclude(id__in=disabled_ids)
+
     if action == 'select_new':
-        # Select only new products (not on website)
-        synced_product_ids = ProductSyncStatus.objects.filter(
+        # Narrow to products NOT already on the website
+        synced_ids = ProductSyncStatus.objects.filter(
             on_website=True
         ).values_list('product_id', flat=True)
-        products_query = products_query.exclude(id__in=synced_product_ids)
-    
-    count = 0
-    for product in products_query:
-        sync_status, created = ProductSyncStatus.objects.get_or_create(
-            product=product,
-            defaults={'status': 'new'}
-        )
-        
-        if action in ['select_all', 'select_new']:
-            sync_status.selected_for_export = True
-        else:  # deselect_all
-            sync_status.selected_for_export = False
-        
-        sync_status.save()
-        count += 1
-    
+        products_query = products_query.exclude(id__in=synced_ids)
+    elif action == 'deselect_all':
+        # Only touch currently-selected products (faster)
+        selected_ids = ProductSyncStatus.objects.filter(
+            selected_for_export=True
+        ).values_list('product_id', flat=True)
+        products_query = products_query.filter(id__in=selected_ids)
+
+    want_selected = action in ('select_all', 'select_new')
+
+    # Bulk-upsert via get_or_create + bulk_update for performance
+    updated = 0
+    pids = list(products_query.values_list('id', flat=True))
+
+    # Batch process in groups of 500 to avoid huge IN clauses
+    batch_size = 500
+    for i in range(0, len(pids), batch_size):
+        batch = pids[i:i + batch_size]
+        # Ensure a ProductSyncStatus row exists for every product
+        existing = {
+            ss.product_id: ss
+            for ss in ProductSyncStatus.objects.filter(product_id__in=batch)
+        }
+        to_create = []
+        to_update = []
+        for pid in batch:
+            if pid in existing:
+                ss = existing[pid]
+                if ss.selected_for_export != want_selected:
+                    ss.selected_for_export = want_selected
+                    to_update.append(ss)
+            else:
+                to_create.append(ProductSyncStatus(
+                    product_id=pid,
+                    selected_for_export=want_selected,
+                ))
+        if to_create:
+            ProductSyncStatus.objects.bulk_create(to_create, ignore_conflicts=True)
+        if to_update:
+            ProductSyncStatus.objects.bulk_update(to_update, ['selected_for_export'])
+        updated += len(to_update) + len(to_create)
+
+    selected_count = ProductSyncStatus.objects.filter(selected_for_export=True).count()
+
     return JsonResponse({
         'success': True,
-        'count': count,
-        'message': f'{count} products updated'
+        'updated': updated,
+        'selected_count': selected_count,
+        'message': f'{updated} products updated',
     })
 
 

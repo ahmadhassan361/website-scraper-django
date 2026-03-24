@@ -980,96 +980,68 @@ function updateRowToEnabled(productId) {
 }
 
 // =====================================================================
-// BULK SELECT
+// BULK SELECT  — operates on ALL pages via the server-side endpoint
 // =====================================================================
 function bulkSelect(action) {
-    var checkboxes = $('.product-select');
-    if (checkboxes.length === 0) {
-        showToast('No selectable products on this page.', 'danger');
-        return;
-    }
+    var labels = {
+        select_all:   'Selecting all products across all pages…',
+        select_new:   'Selecting all new products across all pages…',
+        deselect_all: 'Deselecting all products across all pages…',
+    };
+    showToast(labels[action] || 'Updating…', 'success');
 
-    var productIds = [];
-
-    if (action === 'select_all') {
-        checkboxes.each(function() {
-            if (!$(this).is(':checked')) {
-                $(this).prop('checked', true);
-                productIds.push($(this).data('product-id'));
-            }
-        });
-    } else if (action === 'select_new') {
-        checkboxes.each(function() {
-            var $row   = $(this).closest('tr');
-            var isNew  = $row.find('.badge.bg-warning').length > 0;
-            if (isNew && !$(this).is(':checked')) {
-                $(this).prop('checked', true);
-                productIds.push($(this).data('product-id'));
-            }
-        });
-    } else if (action === 'deselect_all') {
-        checkboxes.each(function() {
-            if ($(this).is(':checked')) {
-                $(this).prop('checked', false);
-                productIds.push($(this).data('product-id'));
-            }
-        });
-    }
-
-    if (productIds.length === 0) {
-        showToast('Nothing to change — selection already up to date.', 'success');
-        return;
-    }
-
-    // Send a single batch request to update all affected products at once
     $.ajax({
-        url: '{% url "scraper:toggle_product_selection" %}',
+        url: '{% url "scraper:bulk_select_products" %}',
         method: 'POST',
         data: {
             'csrfmiddlewaretoken': '{{ csrf_token }}',
-            'product_ids': productIds,        // array
-            'select': (action !== 'deselect_all') ? '1' : '0'
+            'action':        action,
+            'website':       $('#filter_website').val() || 'all',
+            'status_filter': $('#filter_status').val()  || 'all',
         },
-        traditional: true,   // so jQuery serialises array correctly
         success: function(response) {
-            if (response.success) {
-                // Update row highlighting
-                var selected = (action !== 'deselect_all');
-                productIds.forEach(function(pid) {
-                    var $cb  = $('input.product-select[data-product-id="' + pid + '"]');
-                    var $row = $cb.closest('tr');
-                    if (selected) {
-                        $row.addClass('table-info');
-                    } else {
-                        $row.removeClass('table-info');
-                    }
-                });
-                // Refresh the header counter from server value
-                if (response.selected_count !== undefined) {
-                    $('#selectedCount').text(response.selected_count);
-                }
-                showToast(
-                    (selected ? 'Selected ' : 'Deselected ') + productIds.length + ' product(s).',
-                    'success'
-                );
-            } else {
-                showToast('Error updating selection: ' + (response.error || 'Unknown error'), 'danger');
+            if (!response.success) {
+                showToast('Error: ' + (response.error || 'Unknown error'), 'danger');
+                return;
             }
-        },
-        error: function() {
-            // Fallback: toggle each checkbox individually via existing single-item endpoint
-            productIds.forEach(function(pid) {
-                var $cb = $('input.product-select[data-product-id="' + pid + '"]');
-                $.ajax({
-                    url: '{% url "scraper:toggle_product_selection" %}',
-                    method: 'POST',
-                    data: {
-                        'csrfmiddlewaretoken': '{{ csrf_token }}',
-                        'product_id': pid
+
+            var wantChecked = (action !== 'deselect_all');
+
+            // ── Sync visible checkboxes to match the new DB state ──
+            $('.product-select').each(function() {
+                var $cb  = $(this);
+                var $row = $cb.closest('tr');
+                if (action === 'select_all') {
+                    $cb.prop('checked', true);
+                    $row.addClass('table-info');
+                } else if (action === 'deselect_all') {
+                    $cb.prop('checked', false);
+                    $row.removeClass('table-info');
+                } else if (action === 'select_new') {
+                    // Only tick rows with a "New" badge
+                    if ($row.find('.badge.bg-warning').length > 0) {
+                        $cb.prop('checked', true);
+                        $row.addClass('table-info');
                     }
-                });
+                }
             });
-            showToast('Selection updated (fallback mode).', 'success');
+
+            // ── Update the global "Selected" counter ──
+            if (response.selected_count !== undefined) {
+                $('#selectedCount').text(response.selected_count);
+            }
+
+            var verb = wantChecked ? 'Selected' : 'Deselected';
+            showToast(
+                verb + ' ' + response.updated + ' product(s) across all pages. ' +
+                'Total selected: ' + response.selected_count,
+                'success'
+            );
+        },
+        error: function(xhr) {
+            var msg = 'Bulk select failed.';
+            try { msg = JSON.parse(xhr.responseText).error || msg; } catch(e) {}
+            showToast(msg, 'danger');
         }
     });
 }

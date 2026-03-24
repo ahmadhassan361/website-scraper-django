@@ -979,6 +979,138 @@ function updateRowToEnabled(productId) {
     showToast('Product enabled successfully.', 'success');
 }
 
+// =====================================================================
+// BULK SELECT
+// =====================================================================
+function bulkSelect(action) {
+    var checkboxes = $('.product-select');
+    if (checkboxes.length === 0) {
+        showToast('No selectable products on this page.', 'danger');
+        return;
+    }
+
+    var productIds = [];
+
+    if (action === 'select_all') {
+        checkboxes.each(function() {
+            if (!$(this).is(':checked')) {
+                $(this).prop('checked', true);
+                productIds.push($(this).data('product-id'));
+            }
+        });
+    } else if (action === 'select_new') {
+        checkboxes.each(function() {
+            var $row   = $(this).closest('tr');
+            var isNew  = $row.find('.badge.bg-warning').length > 0;
+            if (isNew && !$(this).is(':checked')) {
+                $(this).prop('checked', true);
+                productIds.push($(this).data('product-id'));
+            }
+        });
+    } else if (action === 'deselect_all') {
+        checkboxes.each(function() {
+            if ($(this).is(':checked')) {
+                $(this).prop('checked', false);
+                productIds.push($(this).data('product-id'));
+            }
+        });
+    }
+
+    if (productIds.length === 0) {
+        showToast('Nothing to change — selection already up to date.', 'success');
+        return;
+    }
+
+    // Send a single batch request to update all affected products at once
+    $.ajax({
+        url: '{% url "scraper:toggle_product_selection" %}',
+        method: 'POST',
+        data: {
+            'csrfmiddlewaretoken': '{{ csrf_token }}',
+            'product_ids': productIds,        // array
+            'select': (action !== 'deselect_all') ? '1' : '0'
+        },
+        traditional: true,   // so jQuery serialises array correctly
+        success: function(response) {
+            if (response.success) {
+                // Update row highlighting
+                var selected = (action !== 'deselect_all');
+                productIds.forEach(function(pid) {
+                    var $cb  = $('input.product-select[data-product-id="' + pid + '"]');
+                    var $row = $cb.closest('tr');
+                    if (selected) {
+                        $row.addClass('table-info');
+                    } else {
+                        $row.removeClass('table-info');
+                    }
+                });
+                // Refresh the header counter from server value
+                if (response.selected_count !== undefined) {
+                    $('#selectedCount').text(response.selected_count);
+                }
+                showToast(
+                    (selected ? 'Selected ' : 'Deselected ') + productIds.length + ' product(s).',
+                    'success'
+                );
+            } else {
+                showToast('Error updating selection: ' + (response.error || 'Unknown error'), 'danger');
+            }
+        },
+        error: function() {
+            // Fallback: toggle each checkbox individually via existing single-item endpoint
+            productIds.forEach(function(pid) {
+                var $cb = $('input.product-select[data-product-id="' + pid + '"]');
+                $.ajax({
+                    url: '{% url "scraper:toggle_product_selection" %}',
+                    method: 'POST',
+                    data: {
+                        'csrfmiddlewaretoken': '{{ csrf_token }}',
+                        'product_id': pid
+                    }
+                });
+            });
+            showToast('Selection updated (fallback mode).', 'success');
+        }
+    });
+}
+
+// =====================================================================
+// CHECKBOX — individual toggle (wired once on DOM ready)
+// =====================================================================
+$(document).ready(function() {
+    // Highlight already-selected rows on load
+    $('.product-select:checked').closest('tr').addClass('table-info');
+
+    // Wire the change handler for every checkbox on this page
+    $(document).on('change', '.product-select', function() {
+        var pid       = $(this).data('product-id');
+        var isChecked = $(this).is(':checked');
+        var $checkbox = $(this);
+
+        $.ajax({
+            url: '{% url "scraper:toggle_product_selection" %}',
+            method: 'POST',
+            data: {
+                'csrfmiddlewaretoken': '{{ csrf_token }}',
+                'product_id': pid
+            },
+            success: function(r) {
+                if (r.success) {
+                    $checkbox.closest('tr')[r.selected ? 'addClass' : 'removeClass']('table-info');
+                    updateSelectedCount(r.selected ? +1 : -1);
+                } else {
+                    $checkbox.prop('checked', !isChecked);  // revert
+                    showToast('Error toggling selection: ' + (r.error || 'Unknown'), 'danger');
+                }
+            },
+            error: function() {
+                $checkbox.prop('checked', !isChecked);  // revert
+                showToast('Network error — please try again.', 'danger');
+            }
+        });
+    });
+});
+
 // Simple Bootstrap toast notification
 function showToast(message, type) {
     var bg = type === 'success' ? 'bg-success' : 'bg-danger';

@@ -128,6 +128,7 @@ sudo systemctl status celery celery-sync celery-beat
 
 ---
 
+
 ### Quick reference — daily operations
 
 | Action | Command |

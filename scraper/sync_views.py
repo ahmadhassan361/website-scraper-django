@@ -222,32 +222,74 @@ def product_sync_dashboard(request):
 @require_http_methods(["POST"])
 def toggle_product_selection(request):
     """
-    Toggle product selection for export
+    Toggle (or batch-set) product selection for export.
+
+    Two modes:
+    1. Single toggle  — POST: product_id=<int>
+       Flips selected_for_export and returns {'success', 'selected', 'selected_count'}.
+
+    2. Batch set      — POST: product_ids[]=<int>&product_ids[]=<int>…&select=1|0
+       Sets selected_for_export=True/False for every id in product_ids and
+       returns {'success', 'updated', 'selected_count'}.
     """
+    def _global_selected_count():
+        return ProductSyncStatus.objects.filter(selected_for_export=True).count()
+
+    # ── Batch mode ─────────────────────────────────────────────────────
+    product_ids = request.POST.getlist('product_ids')
+    if product_ids:
+        want_selected = request.POST.get('select', '1') == '1'
+        updated = 0
+        for pid in product_ids:
+            try:
+                product = Product.objects.get(id=int(pid))
+                sync_status, _ = ProductSyncStatus.objects.get_or_create(
+                    product=product,
+                    defaults={'status': 'new'}
+                )
+                if not sync_status.is_disabled:
+                    sync_status.selected_for_export = want_selected
+                    sync_status.save()
+                    updated += 1
+            except (Product.DoesNotExist, ValueError):
+                continue
+
+        return JsonResponse({
+            'success': True,
+            'updated': updated,
+            'selected_count': _global_selected_count(),
+        })
+
+    # ── Single toggle mode ──────────────────────────────────────────────
     product_id = request.POST.get('product_id')
-    
+    if not product_id:
+        return JsonResponse({'success': False, 'error': 'No product_id provided'}, status=400)
+
     try:
-        product = Product.objects.get(id=product_id)
-        
-        # Get or create sync status
-        sync_status, created = ProductSyncStatus.objects.get_or_create(
+        product = Product.objects.get(id=int(product_id))
+
+        sync_status, _ = ProductSyncStatus.objects.get_or_create(
             product=product,
             defaults={'status': 'new'}
         )
-        
-        # Toggle selection
+
+        if sync_status.is_disabled:
+            return JsonResponse({
+                'success': False,
+                'error': 'Product is disabled and cannot be selected',
+            }, status=400)
+
         sync_status.selected_for_export = not sync_status.selected_for_export
         sync_status.save()
-        
+
         return JsonResponse({
             'success': True,
-            'selected': sync_status.selected_for_export
+            'selected': sync_status.selected_for_export,
+            'selected_count': _global_selected_count(),
         })
-    except Product.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': 'Product not found'
-        }, status=404)
+
+    except (Product.DoesNotExist, ValueError):
+        return JsonResponse({'success': False, 'error': 'Product not found'}, status=404)
 
 
 @login_required

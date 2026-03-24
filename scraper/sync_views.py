@@ -301,31 +301,76 @@ def bulk_select_products(request):
     POST params:
         action         — 'select_all' | 'select_new' | 'deselect_all'
         website        — website name filter, or 'all'
-        status_filter  — current status tab filter (used to narrow select_new correctly)
+        status_filter  — current status tab filter (mirrors dashboard view logic exactly)
+        search_query   — current search string (optional)
     """
-    action        = request.POST.get('action')        # select_all | deselect_all | select_new
+    action         = request.POST.get('action', '')
     website_filter = request.POST.get('website', 'all')
     status_filter  = request.POST.get('status_filter', 'all')
+    search_query   = request.POST.get('search_query', '').strip()
 
-    # Build the same queryset the dashboard uses so filters are respected
+    # ── Step 1: mirror the exact same queryset as product_sync_dashboard ──
     products_query = Product.objects.all()
+
     if website_filter != 'all':
         products_query = products_query.filter(website__iexact=website_filter)
 
-    # Never touch disabled products
-    disabled_ids = ProductSyncStatus.objects.filter(
-        is_disabled=True
-    ).values_list('product_id', flat=True)
-    products_query = products_query.exclude(id__in=disabled_ids)
+    # Apply the same status filter logic
+    if status_filter == 'new':
+        synced_ids = ProductSyncStatus.objects.filter(
+            on_website=True
+        ).values_list('product_id', flat=True)
+        disabled_ids = ProductSyncStatus.objects.filter(
+            is_disabled=True
+        ).values_list('product_id', flat=True)
+        products_query = products_query.exclude(id__in=synced_ids).exclude(id__in=disabled_ids)
 
+    elif status_filter == 'synced':
+        synced_ids = ProductSyncStatus.objects.filter(
+            on_website=True,
+            is_disabled=False
+        ).values_list('product_id', flat=True)
+        products_query = products_query.filter(id__in=synced_ids)
+
+    elif status_filter == 'selected':
+        selected_ids = ProductSyncStatus.objects.filter(
+            selected_for_export=True,
+            is_disabled=False
+        ).values_list('product_id', flat=True)
+        products_query = products_query.filter(id__in=selected_ids)
+
+    elif status_filter == 'disabled':
+        # Selecting disabled products makes no sense — reject silently
+        return JsonResponse({
+            'success': False,
+            'error': 'Cannot bulk-select disabled products.',
+        }, status=400)
+
+    else:
+        # 'all' — exclude disabled (same as dashboard default view)
+        disabled_ids = ProductSyncStatus.objects.filter(
+            is_disabled=True
+        ).values_list('product_id', flat=True)
+        products_query = products_query.exclude(id__in=disabled_ids)
+
+    # Apply search if provided
+    if search_query:
+        products_query = products_query.filter(
+            Q(name__icontains=search_query) |
+            Q(sku__icontains=search_query) |
+            Q(category__icontains=search_query)
+        )
+
+    # ── Step 2: further narrow based on action ──
     if action == 'select_new':
-        # Narrow to products NOT already on the website
+        # Additionally exclude products already on website
         synced_ids = ProductSyncStatus.objects.filter(
             on_website=True
         ).values_list('product_id', flat=True)
         products_query = products_query.exclude(id__in=synced_ids)
+
     elif action == 'deselect_all':
-        # Only touch currently-selected products (faster)
+        # Only touch currently-selected products within the filtered set (faster)
         selected_ids = ProductSyncStatus.objects.filter(
             selected_for_export=True
         ).values_list('product_id', flat=True)
@@ -333,15 +378,13 @@ def bulk_select_products(request):
 
     want_selected = action in ('select_all', 'select_new')
 
-    # Bulk-upsert via get_or_create + bulk_update for performance
+    # ── Step 3: bulk-upsert in batches of 500 ──
     updated = 0
     pids = list(products_query.values_list('id', flat=True))
 
-    # Batch process in groups of 500 to avoid huge IN clauses
     batch_size = 500
     for i in range(0, len(pids), batch_size):
         batch = pids[i:i + batch_size]
-        # Ensure a ProductSyncStatus row exists for every product
         existing = {
             ss.product_id: ss
             for ss in ProductSyncStatus.objects.filter(product_id__in=batch)

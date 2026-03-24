@@ -996,8 +996,9 @@ function bulkSelect(action) {
         data: {
             'csrfmiddlewaretoken': '{{ csrf_token }}',
             'action':        action,
-            'website':       $('#filter_website').val() || 'all',
-            'status_filter': $('#filter_status').val()  || 'all',
+            'website':       $('#filter_website').val()  || 'all',
+            'status_filter': $('#filter_status').val()   || 'all',
+            'search_query':  $('#filter_search').val()   || '',
         },
         success: function(response) {
             if (!response.success) {

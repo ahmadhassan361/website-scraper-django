@@ -588,22 +588,12 @@ function exportSelectedProducts() {
                 showExportBanner(response.export_log_id, 0, response.filename, false, false);
                 startExportPolling(response.export_log_id);
             } else if (response.already_running) {
-                // Reconnect to existing job banner
+                // Reconnect to existing in-progress job
                 showToast('An export is already in progress — reconnecting status bar.', 'success');
                 showExportBanner(response.export_log_id, response.progress, '', false, false);
                 startExportPolling(response.export_log_id);
-            } else if (response.pending_download) {
-                // Completed export awaiting download
-                if (confirm(
-                    'A completed export (' + response.products_exported + ' products) is ready.\n' +
-                    'File: ' + response.filename + '\n\nDownload it now?'
-                )) {
-                    window.location.href = '/scraper/sync/export-log/' + response.export_log_id + '/download/';
-                } else {
-                    showExportBanner(response.export_log_id, 100, response.filename, true, true);
-                }
             } else {
-                alert('Error: ' + response.error);
+                alert('Error: ' + (response.error || 'Unknown error'));
             }
         },
         error: function(xhr) {
@@ -613,12 +603,6 @@ function exportSelectedProducts() {
                     showToast('Export already running — reconnecting status bar.', 'success');
                     showExportBanner(r.export_log_id, r.progress, '', false, false);
                     startExportPolling(r.export_log_id);
-                } else if (r.pending_download) {
-                    if (confirm('A completed export (' + r.products_exported + ' products) is ready.\nDownload now?')) {
-                        window.location.href = '/scraper/sync/export-log/' + r.export_log_id + '/download/';
-                    } else {
-                        showExportBanner(r.export_log_id, 100, r.filename, true, true);
-                    }
                 } else {
                     alert('Error: ' + (r.error || 'Unknown error'));
                 }

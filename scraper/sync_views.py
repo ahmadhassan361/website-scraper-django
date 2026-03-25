@@ -540,32 +540,6 @@ def export_selected_products(request):
         }, status=409)
 
     # ------------------------------------------------------------------
-    # Check for a recently-completed export that hasn't been downloaded yet
-    # (completed within the last 24 hours and file still exists)
-    # ------------------------------------------------------------------
-    recent_completed = ProductExportLog.objects.filter(
-        status='completed'
-    ).order_by('-completed_at').first()
-
-    if recent_completed and recent_completed.file_path:
-        if os.path.exists(recent_completed.file_path):
-            from datetime import timedelta
-            age = timezone.now() - recent_completed.completed_at
-            if age < timedelta(hours=24):
-                return JsonResponse({
-                    'success': False,
-                    'pending_download': True,
-                    'export_log_id': recent_completed.id,
-                    'filename': recent_completed.filename,
-                    'products_exported': recent_completed.products_exported,
-                    'error': (
-                        f'A completed export is waiting to be downloaded '
-                        f'({recent_completed.products_exported} products). '
-                        f'Please download it first.'
-                    )
-                }, status=409)
-
-    # ------------------------------------------------------------------
     # Get selected products
     # ------------------------------------------------------------------
     selected_statuses = ProductSyncStatus.objects.filter(selected_for_export=True)

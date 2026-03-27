@@ -7,7 +7,8 @@ from .tasks import (scrape_waterdale_collection, scrape_btshalom,
                     scrape_shaijudaica, scrape_gramcoschoolsupplies, scrape_ozvehadar, scrape_craftsandmore,
                     scrape_nermitzvah, scrape_thekoshercook_collection, scrape_alef_to_tav_collection, 
                     scrape_chazakkinder_collection, scrape_kaftorjudaica, scrape_mefoarjudaica,
-                    scrape_davidjudaica, scrape_zionjudaica, scrape_ezpekalach, scrape_classictouchdecor)
+                    scrape_davidjudaica, scrape_zionjudaica, scrape_ezpekalach, scrape_classictouchdecor, scrape_toys4u,
+                    scrape_feldheim)
 from .models import Website, ScrapingSession, ScrapingState, ScrapingLog
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -238,6 +239,8 @@ SCRAPER_FUNCTIONS = {
     'zionjudaica': scrape_zionjudaica,
     'ezpekalach': scrape_ezpekalach,
     'classictouchdecor': scrape_classictouchdecor,
+    'toys4u': scrape_toys4u,
+    'feldheim': scrape_feldheim,
 }
 
 def get_scraper_function(function_name):
@@ -768,6 +771,18 @@ def initialize_websites():
             'url': 'https://www.classictouchdecor.com',
             'is_active': True,
             'scraper_function': 'classictouchdecor'
+        },
+        {
+            'name': 'toys4u',
+            'url': 'https://www.toys4u.com',
+            'is_active': True,
+            'scraper_function': 'toys4u'
+        },
+        {
+            'name': 'feldheim',
+            'url': 'https://feldheim.com',
+            'is_active': True,
+            'scraper_function': 'feldheim'
         },
     ]
     

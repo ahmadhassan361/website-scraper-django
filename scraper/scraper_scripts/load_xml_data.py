@@ -4,8 +4,8 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import random
 import os
-from urllib.parse import urljoin
-
+from urllib.parse import urljoin, urlparse
+from time import sleep
 def get_zionjudaica_urls():
     sitemap_urls = [
         "https://zionjudaica.com/product-sitemap.xml",
@@ -348,3 +348,75 @@ def load_simchonim_sitemap_product_urls():
 
     return product_links
 
+
+
+
+
+
+def load_toys4u_products_urls():
+    BASE_URL = "https://toys4u.com"
+    url = "https://toys4u.com/categories/?page=1&limit=100"
+    all_products = []
+
+    while url:
+        print(f"Scraping: {url}")
+
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        for item in soup.select("ul.productGrid li.product"):
+            title_tag = item.select_one(".card-title a")
+            price_tag = item.select_one(".price--withoutTax")
+            image_tag = item.select_one(".card-image")
+
+            link = title_tag["href"] if title_tag else None
+            full_link = urljoin(BASE_URL, link) if link else None
+
+            category = None
+            if full_link:
+                parts = urlparse(full_link).path.strip("/").split("/")
+                category = parts[0] if parts else None
+
+            all_products.append({
+                "title": title_tag.get_text(strip=True) if title_tag else None,
+                "link": full_link,
+                "image": image_tag["src"] if image_tag else None,
+                "price": price_tag.get_text(strip=True) if price_tag else None,
+                "category": category,
+            })
+
+        next_btn = soup.select_one(".pagination-item--next a")
+        url = urljoin(BASE_URL, next_btn["href"]) if next_btn else None
+        sleep(5)
+    return all_products
+
+
+
+
+
+def load_feldheim_xml_data():
+    url = "https://feldheim.com/sitemap.xml"
+    res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+
+    soup = BeautifulSoup(res.content, "xml")
+
+    results = []
+
+    for url_tag in soup.find_all("url"):
+        image_tag = url_tag.find("image:image")
+
+        # skip if no image
+        if not image_tag:
+            continue
+
+        page_loc = url_tag.find("loc")
+        image_loc = image_tag.find("image:loc")
+        image_title = image_tag.find("image:title")
+
+        results.append({
+            "link": page_loc.get_text(strip=True) if page_loc else None,
+            "image": image_loc.get_text(strip=True) if image_loc else None,
+            "title": image_title.get_text(strip=True) if image_title else None,
+        })
+
+    return results

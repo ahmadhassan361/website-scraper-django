@@ -44,7 +44,7 @@ def home(request):
     custom_scraper_types = [
         'meiros', 'ritelite', 'shaijudaica', 'jewisheducationaltoys',
         'legacyjudaica', 'simchonim', 'kaftorjudaica', 'mefoarjudaica',
-        'ozvehadar', 'craftsandmore', 'zionjudaica'
+        'ozvehadar', 'craftsandmore', 'zionjudaica', 'toys4u', 'feldheim'
     ]
     
     fast_websites = []  # Shopify websites

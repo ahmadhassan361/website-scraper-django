@@ -16,6 +16,7 @@ from .scraper_scripts.load_xml_data import (load_craftsandmore_product_urls,load
                                             load_feldheim_xml_data)
 from bs4 import BeautifulSoup
 import re
+import cloudscraper
 
 # Headers for requests
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'}
@@ -965,33 +966,7 @@ def scrape_feldheim_products_common(session, resume_from_index=0):
     try:
         # Get product URLs from sitemap
         product_urls = load_feldheim_xml_data()
-        # url = "https://feldheim.com/sitemap.xml"
-        # res = requests.get(url,headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        # log_message(session, 'error', f'{res}')
         
-
-        # soup = BeautifulSoup(res.content, "xml")
-
-        # results = []
-        # log_message(session, 'error', f'before loop')
-        # for url_tag in soup.find_all("url"):
-        #     image_tag = url_tag.find("image:image")
-        #     log_message(session, 'error', f'inside loop')
-        #     # skip if no image
-        #     if not image_tag:
-        #         continue
-            
-        #     log_message(session, 'error', f'after it')
-        #     page_loc = url_tag.find("loc")
-        #     image_loc = image_tag.find("image:loc")
-        #     image_title = image_tag.find("image:title")
-
-        #     results.append({
-        #         "link": page_loc.get_text(strip=True) if page_loc else None,
-        #         "image": image_loc.get_text(strip=True) if image_loc else None,
-        #         "title": image_title.get_text(strip=True) if image_title else None,
-        #     })
-        # product_urls = results
         if not product_urls:
             log_message(session, 'error', 'No product URLs found in sitemap')
             return {
@@ -1017,8 +992,8 @@ def scrape_feldheim_products_common(session, resume_from_index=0):
                 log_message(session, 'info', f'Processing product {idx + 1}/{len(product_urls)}: {product_url["link"]}')
                 
                 # Make request to product page
-                response = requests.get(product_url["link"], headers=HEADERS, timeout=30)
-                response.raise_for_status()
+                scraper = cloudscraper.create_scraper()
+                response = scraper.get(product_url["link"])
                 
                 # Parse HTML with BeautifulSoup
                 soup = BeautifulSoup(response.content, 'html.parser')

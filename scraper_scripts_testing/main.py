@@ -4,14 +4,15 @@ from urllib.parse import urljoin, urlparse
 from time import sleep
 import requests
 from bs4 import BeautifulSoup
-
+import cloudscraper
 
 
 def load_feldheim_xml_data():
-    file_path = "./feldheim.xml"
+    scraper = cloudscraper.create_scraper()
+    res = scraper.get("https://feldheim.com/sitemap.xml")
 
-    with open(file_path, "rb") as f:
-        soup = BeautifulSoup(f, "xml")
+    
+    soup = BeautifulSoup(res.content, "xml")
 
     results = []
 

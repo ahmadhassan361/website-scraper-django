@@ -6,6 +6,8 @@ import random
 import os
 from urllib.parse import urljoin, urlparse
 from time import sleep
+import cloudscraper
+
 def get_zionjudaica_urls():
     sitemap_urls = [
         "https://zionjudaica.com/product-sitemap.xml",
@@ -395,11 +397,12 @@ def load_toys4u_products_urls():
 
 
 def load_feldheim_xml_data():
-    base_dir = os.path.dirname(__file__)  # directory of load_xml_data.py
-    file_path = os.path.join(base_dir, "./feldheim.xml")
 
-    with open(file_path, "rb") as f:
-        soup = BeautifulSoup(f, "xml")
+    scraper = cloudscraper.create_scraper()
+    res = scraper.get("https://feldheim.com/sitemap.xml")
+
+    
+    soup = BeautifulSoup(res.content, "xml")
 
 
     results = []

@@ -6,9 +6,10 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def fetch_sitemap_images():
+
+def load_feldheim_xml_data():
     url = "https://feldheim.com/sitemap.xml"
-    res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    res = requests.get(url, timeout=10)
 
     soup = BeautifulSoup(res.content, "xml")
 
@@ -33,9 +34,8 @@ def fetch_sitemap_images():
 
     return results
 
-
 # Example usage
 if __name__ == "__main__":
-    data = fetch_sitemap_images()
+    data = load_feldheim_xml_data()
     print(f"Total: {len(data)}")
     print(data[:3])

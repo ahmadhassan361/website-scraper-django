@@ -395,7 +395,8 @@ def load_toys4u_products_urls():
 
 
 def load_feldheim_xml_data():
-    file_path = "./feldheim.xml"
+    base_dir = os.path.dirname(__file__)  # directory of load_xml_data.py
+    file_path = os.path.join(base_dir, "./feldheim.xml")
 
     with open(file_path, "rb") as f:
         soup = BeautifulSoup(f, "xml")

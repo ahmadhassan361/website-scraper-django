@@ -964,34 +964,34 @@ def scrape_feldheim_products_common(session, resume_from_index=0):
     
     try:
         # Get product URLs from sitemap
-        # product_urls = load_feldheim_xml_data()
-        url = "https://feldheim.com/sitemap.xml"
-        res = requests.get(url,headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        log_message(session, 'error', f'{res}')
+        product_urls = load_feldheim_xml_data()
+        # url = "https://feldheim.com/sitemap.xml"
+        # res = requests.get(url,headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        # log_message(session, 'error', f'{res}')
         
 
-        soup = BeautifulSoup(res.content, "xml")
+        # soup = BeautifulSoup(res.content, "xml")
 
-        results = []
-        log_message(session, 'error', f'before loop')
-        for url_tag in soup.find_all("url"):
-            image_tag = url_tag.find("image:image")
-            log_message(session, 'error', f'inside loop')
-            # skip if no image
-            if not image_tag:
-                continue
+        # results = []
+        # log_message(session, 'error', f'before loop')
+        # for url_tag in soup.find_all("url"):
+        #     image_tag = url_tag.find("image:image")
+        #     log_message(session, 'error', f'inside loop')
+        #     # skip if no image
+        #     if not image_tag:
+        #         continue
             
-            log_message(session, 'error', f'after it')
-            page_loc = url_tag.find("loc")
-            image_loc = image_tag.find("image:loc")
-            image_title = image_tag.find("image:title")
-            
-            results.append({
-                "link": page_loc.get_text(strip=True) if page_loc else None,
-                "image": image_loc.get_text(strip=True) if image_loc else None,
-                "title": image_title.get_text(strip=True) if image_title else None,
-            })
-        product_urls = results
+        #     log_message(session, 'error', f'after it')
+        #     page_loc = url_tag.find("loc")
+        #     image_loc = image_tag.find("image:loc")
+        #     image_title = image_tag.find("image:title")
+
+        #     results.append({
+        #         "link": page_loc.get_text(strip=True) if page_loc else None,
+        #         "image": image_loc.get_text(strip=True) if image_loc else None,
+        #         "title": image_title.get_text(strip=True) if image_title else None,
+        #     })
+        # product_urls = results
         if not product_urls:
             log_message(session, 'error', 'No product URLs found in sitemap')
             return {

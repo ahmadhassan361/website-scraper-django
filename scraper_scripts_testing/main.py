@@ -8,10 +8,10 @@ from bs4 import BeautifulSoup
 
 
 def load_feldheim_xml_data():
-    url = "https://feldheim.com/sitemap.xml"
-    res = requests.get(url, timeout=10)
+    file_path = "./feldheim.xml"
 
-    soup = BeautifulSoup(res.content, "xml")
+    with open(file_path, "rb") as f:
+        soup = BeautifulSoup(f, "xml")
 
     results = []
 
